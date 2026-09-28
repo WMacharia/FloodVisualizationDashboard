@@ -38,63 +38,6 @@ def download_file(url: str, dest_path: str):
                 f.write(chunk)
     print(f"Saved: {dest_path} ({os.path.getsize(dest_path) / (1024*1024):.2f} MB)")
 
-# 1. Target Data: FASTFLOOD Nairobi (CSV → Raster)
-TARGET_CSV = "data/raw/flood_hazard_nairobi.csv"
-TARGET_RASTER = "data/raw/fastflood_depth.tif"
-
-if not os.path.exists(TARGET_RASTER):
-    # ------------------------------------------------------------
-    # Step A: Download the CSV if not already present
-    # ------------------------------------------------------------
-    if not os.path.exists(TARGET_CSV):
-        print("Downloading FloodHazard_Nairobi.csv from Zenodo...")
-        try:
-            response = requests.get(
-                "https://zenodo.org/records/18659986/files/FloodHazard_Nairobi.csv",
-                stream=True,
-                timeout=120
-            )
-            response.raise_for_status()
-            with open(TARGET_CSV, "wb") as f:
-                for chunk in response.iter_content(chunk_size=1024*1024):
-                    f.write(chunk)
-            print(f"✅ Saved: {TARGET_CSV}")
-        except Exception as e:
-            print(f"❌ Download failed: {e}")
-            print("   Falling back to synthetic target generation...")
-            # Create a synthetic fallback (as before) to keep pipeline running
-            # ... (keep your existing synthetic fallback code here or skip)
-            # We'll create a minimal one:
-            from rasterio.transform import from_bounds
-            transform = from_bounds(*NAIROBI_BBOX, 1500, 1000)
-            profile = {
-                'driver': 'GTiff', 'height': 1000, 'width': 1500, 'count': 1,
-                'dtype': 'float32', 'crs': 'EPSG:4326', 'transform': transform, 'nodata': -9999.0
-            }
-            with rasterio.open(TARGET_RASTER, 'w', **profile) as dst:
-                synth_depth = np.random.exponential(scale=0.2, size=(1000, 1500)).astype('float32')
-                synth_depth[synth_depth < 0.05] = 0.0
-                dst.write(synth_depth, 1)
-            print(f"✅ Synthetic fallback target created: {TARGET_RASTER}")
-            # Skip the CSV->raster conversion and exit this block
-            # We'll skip to the next dataset
-            # But we need to avoid the rest of this block.
-            # We'll use a flag.
-            # Actually, we'll just let the rest run but check if file exists already.
-            # Better: use an if-else structure.
-            # Let's restructure:
-            if not os.path.exists(TARGET_RASTER):
-                # Proceed with CSV conversion (but we already created synthetic, so skip)
-                pass
-            # But we don't want to overwrite synthetic if it was created.
-            # We'll add a check at the top of this block: if raster already exists, skip all.
-            # So the code should check if raster exists before doing anything.
-            # Since we are inside the main if not exists, we can put this logic inside.
-            # I'll rewrite the entire block cleanly.
-    # (We'll restructure the whole block after this explanation)
-
-# --- ACTUAL FIXED CODE STARTS HERE ---
-# Delete the old target data block and replace with this:
 
 # 1. Target Data: FASTFLOOD Nairobi (CSV → Raster)
 TARGET_CSV = "data/raw/flood_hazard_nairobi.csv"
