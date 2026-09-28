@@ -19,3 +19,5 @@ matplotlib>=3.8.0
 seaborn>=0.13.0
 pysheds>=0.3.3
 setuptools>=68.0.0
+whitebox>=1.4.0
+xgboost>=2.0.3

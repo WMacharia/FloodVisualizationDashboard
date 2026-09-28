@@ -217,32 +217,47 @@ print(f"   [OK] Slope calculated. Mean slope: {float(slope_deg.mean()):.2f} degr
 # -------------------------------------------------------------------------
 # STEP 8: True Flow Accumulation and Topographic Wetness Index (TWI)
 # -------------------------------------------------------------------------
-print("8. Calculating TRUE Flow Accumulation and TWI via PySheds...")
-from pysheds.grid import Grid
-import warnings
-warnings.filterwarnings("ignore")
+print("8. Calculating TRUE Flow Accumulation and TWI via WhiteboxTools...")
+import whitebox
+import rioxarray as rxr
+import os
 
-# FIX: Add data_name='dem' to satisfy the updated PySheds API
-grid = Grid.from_raster("data/processed/master_dem.tif", data_name="dem")
-dem = grid.dem
+os.makedirs("data/interim", exist_ok=True)
 
-print("   [INFO] Tracing water flow across the DEM (this takes ~30 seconds)...")
-fdir = grid.flowdir(dem)
-acc = grid.accumulation(fdir)
-flow_acc = np.abs(acc).astype(np.float32)
+# Initialize WhiteboxTools
+wbt = whitebox.WhiteboxTools()
+wbt.set_verbose_mode(False)
 
-master_dem.copy(data=flow_acc[np.newaxis, ...]).rio.to_raster("data/processed/feature_flow_acc.tif")
+# THE FIX: Generate absolute file paths so the external C++ engine doesn't get lost
+dem_in = os.path.abspath("data/processed/master_dem.tif")
+dem_filled = os.path.abspath("data/interim/dem_filled.tif")
+flow_acc_out = os.path.abspath("data/processed/feature_flow_acc.tif")
+
+print("   [INFO] Filling DEM depressions (Hydrological Conditioning)...")
+wbt.fill_depressions(dem=dem_in, output=dem_filled, fix_flats=True)
+
+print("   [INFO] Tracing water flow across the DEM...")
+wbt.d8_flow_accumulation(i=dem_filled, output=flow_acc_out, out_type="cells")
+
+# Verify the C++ engine successfully wrote the file to disk
+if not os.path.exists(flow_acc_out):
+    raise FileNotFoundError(f"WhiteboxTools failed to create the file at: {flow_acc_out}")
+
+# 3. Read the calculated Flow Accumulation back into Python to compute TWI
+flow_acc_da = rxr.open_rasterio(flow_acc_out).squeeze()
+flow_acc = np.abs(flow_acc_da.values).astype(np.float32)
+
 print(f"   [OK] Flow Accumulation generated. Max upstream pixels: {float(flow_acc.max()):,}")
 
-acc_area = (flow_acc + 1.0) * 30.0
+# 4. Calculate True TWI based on the physics engine
+acc_area = (flow_acc + 1.0) * 30.0  # Convert pixel count to meters
 slope_rad = np.radians(slope_deg)
-slope_rad[slope_rad < 0.001] = 0.001
+slope_rad[slope_rad < 0.001] = 0.001  # Prevent divide-by-zero on flat ground
 twi_true = np.log(acc_area / np.tan(slope_rad)).astype(np.float32)
 twi_true = np.nan_to_num(twi_true, nan=0.0)
 
 master_dem.copy(data=twi_true[np.newaxis, ...]).rio.to_raster("data/processed/feature_twi.tif")
 print(f"   [OK] True TWI generated. Mean TWI: {float(twi_true.mean()):.2f}")
-
 # -------------------------------------------------------------------------
 # STEP 9: Strict Shape, Bounds, and Coordinate Alignment Verification
 # -------------------------------------------------------------------------
