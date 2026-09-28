@@ -17,13 +17,13 @@ print("=======================================================")
 
 # Define input raster feature paths
 FEATURE_FILES = {
-    "elevation": "data/processed/master_dem.tif",
-    "rainfall_mm": "data/processed/feature_rainfall.tif",
-    "building_density": "data/processed/feature_building_density.tif",
-    "dist_drainage_m": "data/processed/feature_dist_drainage.tif",
-    "mannings_n": "data/processed/feature_mannings_n.tif",
-    "slope_deg": "data/processed/feature_slope.tif",
-    "twi": "data/processed/feature_twi.tif"
+    "flow_acc": "data/processed/feature_flow_acc.tif",     # Captures upstream volume
+    "slope_deg": "data/processed/feature_slope.tif",       # Captures velocity
+    "twi": "data/processed/feature_twi.tif",               # The REAL saturation index
+    "hand": "data/processed/feature_hand.tif",             # Height above stream
+    "mannings_n": "data/processed/feature_mannings_n.tif", # Roughness
+    "rainfall_mm": "data/processed/feature_rainfall.tif",  # Input volume
+    "building_density": "data/processed/feature_building_density.tif"
 }
 TARGET_FILE = "data/processed/target_depth.tif"
 MASK_FILE = "data/processed/valid_pixel_mask.tif"
