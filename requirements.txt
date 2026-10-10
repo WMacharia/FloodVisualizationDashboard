@@ -21,3 +21,5 @@ pysheds>=0.3.3
 setuptools>=68.0.0
 whitebox>=1.4.0
 xgboost>=2.0.3
+torch>=2.0.0
+torchvision>=0.15.0
