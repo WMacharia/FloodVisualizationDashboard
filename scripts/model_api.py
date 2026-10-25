@@ -127,7 +127,8 @@ def safe_normalize(arr: np.ndarray, mask: np.ndarray, p_low_pct: float = 5.0, p_
     p_high = float(np.percentile(valid_vals, p_high_pct))
     if abs(p_high - p_low) < 1e-6:
         return np.zeros_like(arr, dtype=np.float32)
-    return np.clip((arr - p_low) / (p_high - p_low + 1e-6), 0.0, 1.0).astype(np.float32)
+    norm = np.clip((arr - p_low) / (p_high - p_low + 1e-6), 0.0, 1.0).astype(np.float32)
+    return np.where(mask, norm, 0.0).astype(np.float32)
 
 unet_state_dict = None
 dem_data = None
@@ -428,6 +429,7 @@ def predict_flood(
     score_2d = storm_2d * (0.38 + 0.94 * hydro_2d)
     prob_grid = 1.0 / (1.0 + np.exp(-7.0 * (score_2d - 0.31)))
     prob_grid = masked_gaussian_smooth(prob_grid.astype(np.float32), valid_mask, sigma=1.0)
+    prob_grid = np.where(valid_mask, prob_grid, 0.0)
 
     # 1. Upsample probability grid 4x (256x256 -> 1024x1024) for smooth vector curves
     prob_highres = cv2.resize(prob_grid, (1024, 1024), interpolation=cv2.INTER_CUBIC)
