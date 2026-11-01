@@ -35,13 +35,16 @@ return [
         ],
     ],
 
+    // Python model server (scripts/model_api.py); only Laravel talks to it
+    'flood_model' => [
+        'url' => env('FLOOD_MODEL_URL', 'http://127.0.0.1:8001'),
+    ],
+
     'google' => [
         'client_id' => env('GOOGLE_CLIENT_ID'),
         'client_secret' => env('GOOGLE_CLIENT_SECRET'),
         'redirect' => env('GOOGLE_REDIRECT_URI'),
-        'guzzle' => [
-            'verify' => false, // Disables local SSL check for cURL
-        ],
+        // Certificates are verified: php.ini needs curl.cainfo / openssl.cafile set to a CA bundle (https://curl.se/ca/cacert.pem)
     ],
 
 ];

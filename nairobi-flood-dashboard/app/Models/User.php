@@ -49,4 +49,28 @@ class User extends Authenticatable
             'password' => 'hashed',
         ];
     }
+
+    // Roles: user (resident), responder (county / Red Cross staff), admin (system owner)
+    public const ROLES = ['user', 'responder', 'admin'];
+
+    public function isAdmin(): bool
+    {
+        return $this->role === 'admin';
+    }
+
+    // Staff can issue advisories and see responder-only alerts
+    public function isStaff(): bool
+    {
+        return in_array($this->role, ['responder', 'admin'], true);
+    }
+
+    public function roleLabel(): string
+    {
+        return ['admin' => 'System admin', 'responder' => 'Responder'][$this->role] ?? 'Resident';
+    }
+
+    public function places()
+    {
+        return $this->hasMany(SavedPlace::class);
+    }
 }

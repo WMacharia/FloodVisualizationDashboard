@@ -1,0 +1,303 @@
+{
+  "architecture": "AttentionUNet",
+  "in_channels": 10,
+  "out_channels": 3,
+  "outputs": [
+    "flood_logit",
+    "log1p_depth_m",
+    "log1p(dv_scale*DV_m2s)"
+  ],
+  "dv_scale": 10.0,
+  "vehicles": {
+    "boda_boda": {
+      "label": "Boda boda (motorcycle)",
+      "depth_m": 0.15,
+      "dv_m2s": null,
+      "basis": "Assumption: no published criterion; avoids any predicted flooding"
+    },
+    "saloon": {
+      "label": "Saloon car",
+      "depth_m": 0.3,
+      "dv_m2s": 0.3,
+      "basis": "ARR Project 10 Table 3: small passenger vehicle"
+    },
+    "large_car": {
+      "label": "Large car / matatu",
+      "depth_m": 0.4,
+      "dv_m2s": 0.45,
+      "basis": "ARR Project 10 Table 3: large passenger vehicle"
+    },
+    "suv_4x4": {
+      "label": "SUV / 4x4",
+      "depth_m": 0.5,
+      "dv_m2s": 0.6,
+      "basis": "ARR Project 10 Table 3: large 4WD"
+    },
+    "lorry_bus": {
+      "label": "Lorry / bus",
+      "depth_m": 0.5,
+      "dv_m2s": 0.6,
+      "basis": "Assumption: no published criterion for heavy vehicles; capped at the large 4WD limit"
+    }
+  },
+  "static_channels": [
+    "tpi",
+    "slope",
+    "hand",
+    "log_acc",
+    "sink_depth",
+    "cn",
+    "bldg_frac"
+  ],
+  "storm_channels": [
+    "intensity/i_max",
+    "duration/d_max",
+    "scs_runoff_mm/q_scale"
+  ],
+  "stats_mean": [
+    -0.07728052139282227,
+    0.05192126706242561,
+    19.540990829467773,
+    1.9776062965393066,
+    0.016799936071038246,
+    0.8090167045593262,
+    0.06710875034332275
+  ],
+  "stats_std": [
+    6.76071834564209,
+    0.06602072715759277,
+    21.049673080444336,
+    1.660012125968933,
+    0.2913269102573395,
+    0.08782739192247391,
+    0.14482229948043823
+  ],
+  "i_max": 120.0,
+  "d_max": 6.0,
+  "q_scale": 100.0,
+  "flood_depth_m": 0.15,
+  "temperature": 1.491023063659668,
+  "threshold": 0.7,
+  "infer_tile": 512,
+  "infer_margin": 32,
+  "trained_storms": [
+    [
+      10.0,
+      1.0
+    ],
+    [
+      20.0,
+      1.0
+    ],
+    [
+      35.0,
+      1.0
+    ],
+    [
+      50.0,
+      1.0
+    ],
+    [
+      70.0,
+      1.0
+    ],
+    [
+      90.0,
+      1.0
+    ],
+    [
+      120.0,
+      1.0
+    ],
+    [
+      10.0,
+      2.0
+    ],
+    [
+      20.0,
+      2.0
+    ],
+    [
+      35.0,
+      2.0
+    ],
+    [
+      50.0,
+      2.0
+    ],
+    [
+      70.0,
+      2.0
+    ],
+    [
+      120.0,
+      2.0
+    ],
+    [
+      10.0,
+      3.0
+    ],
+    [
+      20.0,
+      3.0
+    ],
+    [
+      50.0,
+      3.0
+    ],
+    [
+      70.0,
+      3.0
+    ],
+    [
+      90.0,
+      3.0
+    ],
+    [
+      120.0,
+      3.0
+    ],
+    [
+      10.0,
+      6.0
+    ],
+    [
+      20.0,
+      6.0
+    ],
+    [
+      35.0,
+      6.0
+    ],
+    [
+      50.0,
+      6.0
+    ],
+    [
+      70.0,
+      6.0
+    ],
+    [
+      90.0,
+      6.0
+    ],
+    [
+      120.0,
+      6.0
+    ]
+  ],
+  "heldout_storms": [
+    [
+      90.0,
+      2.0
+    ],
+    [
+      35.0,
+      3.0
+    ]
+  ],
+  "best_val_iou": 0.7242080991191066,
+  "metrics": {
+    "test_blocks_training_storms": {
+      "IoU": 0.7410500901090469,
+      "F1": 0.8512679724942697,
+      "Precision": 0.8809758969371405,
+      "Recall": 0.8234982855691487,
+      "PR_AUC": 0.9367944919589736,
+      "Depth_MAE_wet_m": 0.43575143814086914,
+      "Depth_RMSE_all_m": 0.30065786838531494,
+      "DV_MAE_wet_m2s": 0.8071655035018921,
+      "flooded_share": 0.10733426932196646,
+      "TP": 817047,
+      "FP": 110387,
+      "FN": 175119,
+      "TN": 8141149
+    },
+    "test_blocks_heldout_storms": {
+      "IoU": 0.7535430413917217,
+      "F1": 0.8594520050031537,
+      "Precision": 0.8913848541966959,
+      "Recall": 0.8297279445155431,
+      "PR_AUC": 0.9408403305067222,
+      "Depth_MAE_wet_m": 0.28316858410835266,
+      "Depth_RMSE_all_m": 0.19045895338058472,
+      "DV_MAE_wet_m2s": 0.3953995704650879,
+      "flooded_share": 0.1362653188084168,
+      "TP": 80394,
+      "FP": 9796,
+      "FN": 16498,
+      "TN": 604366
+    },
+    "baselines": {
+      "HAND threshold": {
+        "IoU": 0.5394959974859126,
+        "F1": 0.7008735305151053
+      },
+      "Depression-depth threshold": {
+        "IoU": 0.16205997055898208,
+        "F1": 0.27891842876409706
+      },
+      "Attention U-Net (this work)": {
+        "IoU": 0.7410500901090469,
+        "F1": 0.8512679724942697
+      }
+    },
+    "calibration": {
+      "temperature": 1.491023063659668,
+      "ECE_before": 0.018129950015969034,
+      "ECE_after": 0.014625485528373196
+    },
+    "vehicles": {
+      "boda_boda": {
+        "unsafe_share": 0.10940077285671292,
+        "Precision": 0.8818984222070234,
+        "Recall": 0.824052529800984,
+        "F1": 0.8519947481394914
+      },
+      "saloon": {
+        "unsafe_share": 0.08106908898620921,
+        "Precision": 0.8853426419062791,
+        "Recall": 0.8428879969963682,
+        "F1": 0.8635938621776662
+      },
+      "large_car": {
+        "unsafe_share": 0.06963937639455954,
+        "Precision": 0.8900292264806651,
+        "Recall": 0.8363907028271472,
+        "F1": 0.8623767110604764
+      },
+      "suv_4x4": {
+        "unsafe_share": 0.06157408579376531,
+        "Precision": 0.8949160749440677,
+        "Recall": 0.8261601585760782,
+        "F1": 0.8591647388865278
+      },
+      "lorry_bus": {
+        "unsafe_share": 0.06157408579376531,
+        "Precision": 0.8949160749440677,
+        "Recall": 0.8261601585760782,
+        "F1": 0.8591647388865278
+      }
+    },
+    "inference_seconds_full_grid": 0.41962671279907227
+  },
+  "train_config": {
+    "patch": 128,
+    "batch_size": 16,
+    "samples_per_epoch": 3200,
+    "epochs": 90,
+    "patience": 25,
+    "lr": 0.001,
+    "weight_decay": 1e-05,
+    "pos_weight": 3.0,
+    "depth_loss_weight": 1.0,
+    "dv_loss_weight": 1.0,
+    "dv_scale": 10.0,
+    "flood_depth_m": 0.15,
+    "i_max": 120.0,
+    "d_max": 6.0,
+    "q_scale": 100.0,
+    "infer_tile": 512,
+    "infer_margin": 32
+  }
+}

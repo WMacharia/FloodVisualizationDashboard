@@ -1,0 +1,26 @@
+# Python environment for the flood model pipeline (scripts/08-10) and the model server (scripts/model_api.py)
+# Versions as installed in scripts/nairobi_flood_env (Python 3.13)
+
+# Model server
+fastapi==0.143.0
+uvicorn==0.54.0
+torch==2.14.1
+numpy==2.5.3
+scipy==1.18.1
+opencv-python==5.0.0.93
+rasterio==1.5.1
+
+# Simulation, dataset and dashboard layers
+numba==0.67.0
+pysheds==0.5
+geopandas==1.1.4
+pyogrio==0.13.0
+shapely==2.1.2
+pandas==3.0.5
+affine==3.0.1
+requests==2.34.2
+earthengine-api==1.7.46
+
+# Notebook / evaluation
+matplotlib==3.11.2
+scikit-learn==1.9.1

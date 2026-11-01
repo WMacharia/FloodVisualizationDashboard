@@ -1,2 +1,8 @@
 scripts/data/
 scripts/models/
+
+# Python bytecode and numba caches
+__pycache__/
+*.pyc
+*.nbi
+*.nbc

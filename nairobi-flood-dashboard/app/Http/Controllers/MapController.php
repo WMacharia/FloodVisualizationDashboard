@@ -2,160 +2,120 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Http;
+use App\Services\SystemMonitor;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
 
+/**
+ * Proxies the dashboard's map requests to the Python model server (scripts/model_api.py).
+ * The browser never calls the model server directly. Every request carries the storm
+ * parameters, so one user's simulation never changes another user's results.
+ */
 class MapController extends Controller
 {
-    public function getFloodZones(Request $request)
+    // The first request for a new storm runs the U-Net on the whole grid (~10-25 s on CPU)
+    private const PREDICT_TIMEOUT = 120;
+    private const FAST_TIMEOUT = 60;
+
+    private function modelUrl(string $path): string
     {
-        $intensity = (float) $request->query('intensity', 45);
-        $duration  = (float) $request->query('duration', 2);
-
-        // 1. Call FastAPI on port 8001 (isolated try/catch so PHP errors aren't misreported)
-        try {
-            $response = Http::timeout(60)->get('http://127.0.0.1:8001/predict', [
-                'intensity' => $intensity,
-                'duration'  => $duration,
-            ]);
-        } catch (\Exception $e) {
-            return response()->json([
-                'type' => 'FeatureCollection',
-                'features' => [],
-                'error' => 'FastAPI model server on port 8001 is not reachable: ' . $e->getMessage()
-            ]);
-        }
-
-        if (!$response->successful()) {
-            return response()->json([
-                'type' => 'FeatureCollection',
-                'features' => [],
-                'error' => 'FastAPI returned HTTP ' . $response->status()
-            ]);
-        }
-
-        // 2. Intersect detected flood zones with PostGIS nairobi_roads
-        $data = $response->json();
-        $features = $data['features'] ?? [];
-
-        $verifiedFeatures = [];
-        $zoneMeta = [];
-
-        foreach ($features as $f) {
-            $p = $f['properties'] ?? [];
-            $zId = $p['zone_id'] ?? 0;
-
-            if (!isset($zoneMeta[$zId])) {
-                $geomJson = json_encode($f['geometry']);
-                $cnt = 0;
-                $roadName = null;
-
-                try {
-                    $row = DB::selectOne("
-                        SELECT COUNT(id) AS cnt
-                        FROM nairobi_roads
-                        WHERE ST_Intersects(geom, ST_SetSRID(ST_GeomFromGeoJSON(?), ST_SRID(geom)))
-                    ", [$geomJson]);
-                    $cnt = (int) ($row->cnt ?? 0);
-
-                    $cLat = (float) ($p['center_lat'] ?? -1.288);
-                    $cLng = (float) ($p['center_lng'] ?? 36.825);
-                    $sampleRows = DB::select("
-                        SELECT to_jsonb(r) - 'geom' AS props
-                        FROM nairobi_roads r
-                        WHERE ST_Intersects(r.geom, ST_SetSRID(ST_GeomFromGeoJSON(?), ST_SRID(r.geom)))
-                        ORDER BY r.geom <-> ST_SetSRID(ST_MakePoint(?, ?), ST_SRID(r.geom))
-                        LIMIT 15
-                    ", [$geomJson, $cLng, $cLat]);
-
-                    $names = [];
-                    foreach ($sampleRows as $sr) {
-                        $rp = json_decode($sr->props, true) ?: [];
-                        $candidate = $rp['name'] ?? $rp['street'] ?? $rp['road_name'] ?? $rp['ref'] ?? null;
-                        if (!empty($candidate) && !in_array($candidate, $names)) {
-                            $names[] = $candidate;
-                            if (count($names) >= 2) break;
-                        }
-                    }
-                    if (!empty($names)) {
-                        $roadName = implode(' / ', $names);
-                    }
-                } catch (\Exception $ex) {}
-
-                $zoneMeta[$zId] = [
-                    'cnt' => $cnt,
-                    'road_name' => $roadName
-                ];
-            }
-
-            // Fixed: single $cnt
-            $cnt = $zoneMeta[$zId]['cnt'];
-            $fullLabel = strtolower(($zoneMeta[$zId]['road_name'] ?? '') . ' ' . ($p['name'] ?? ''));
-
-            // Exclude peri-urban Kiambu/Kajiado/Machakos border wards
-            $isOutOfCounty = preg_match('/\b(gataka|nkaimurunya|wangige|banana|karuri|rongai|ronkai|mavoko|matathani|ruiru|kiambu|kiuu|olkeri|muratha)\b/', $fullLabel);
-
-            if ($cnt >= 145 && !$isOutOfCounty) {
-                if (!empty($zoneMeta[$zId]['road_name'])) {
-                    $f['properties']['name'] = $zoneMeta[$zId]['road_name'] . ' (' . $p['name'] . ')';
-                }
-
-                $exposureBoost = min(0.14, ($cnt - 140) / 1800.0);
-                $adjProb = min(0.96, round(($p['flood_probability'] ?? 0.5) + $exposureBoost, 2));
-                $adjDepth = round(max(0.15, ($adjProb - 0.30) * 1.35), 2);
-
-                if ($adjProb >= 0.74) {
-                    $f['properties']['peak_level'] = 3;
-                    $f['properties']['hazard_label'] = 'Critical / Impassable Inundation';
-                } elseif ($adjProb >= 0.56) {
-                    $f['properties']['peak_level'] = 2;
-                    $f['properties']['hazard_label'] = 'High Flood Hazard';
-                } else {
-                    $f['properties']['peak_level'] = 1;
-                    $f['properties']['hazard_label'] = 'Flood Warning (Surface Pooling)';
-                }
-
-                $demPart = trim(explode('|', $p['category'] ?? 'DEM: 1650m')[0]);
-                $f['properties']['flood_probability'] = $adjProb;
-                $f['properties']['predicted_depth_m'] = $adjDepth;
-                $f['properties']['category'] = "{$cnt} road segments impacted | {$demPart} | Prob: " . intval($adjProb * 100) . "%";
-                $verifiedFeatures[] = $f;
-            }
-        }
-
-        $data['features'] = $verifiedFeatures;
-        return response()->json($data);
+        return rtrim(config('services.flood_model.url'), '/') . $path;
     }
 
-    public function calculateRoute(Request $request)
+    private function storm(Request $request): array
     {
-        $startLng   = (float) $request->query('start_lng');
-        $startLat   = (float) $request->query('start_lat');
-        $endLng     = (float) $request->query('end_lng');
-        $endLat     = (float) $request->query('end_lat');
-        $avoidFlood = $request->query('avoid_flood', 'true');
-        $intensity  = (float) $request->query('intensity', 45);
-        $duration   = (float) $request->query('duration', 2);
+        $v = $request->validate([
+            'intensity' => 'required|numeric|min:0|max:120',
+            'duration'  => 'required|numeric|min:1|max:6',
+        ]);
+        return ['intensity' => (float) $v['intensity'], 'duration' => (float) $v['duration']];
+    }
 
+    private function point(Request $request): array
+    {
+        $v = $request->validate([
+            'lat' => 'required|numeric|between:-1.6,-1.0',
+            'lng' => 'required|numeric|between:36.5,37.3',
+        ]);
+        return ['lat' => (float) $v['lat'], 'lng' => (float) $v['lng']];
+    }
+
+    private function forward(string $path, array $query, int $timeout = self::FAST_TIMEOUT)
+    {
+        $t0 = microtime(true);
+        $elapsed = fn () => (int) round((microtime(true) - $t0) * 1000);
         try {
-            $response = Http::timeout(20)->get('http://127.0.0.1:8001/route', [
-                'start_lat'   => $startLat,
-                'start_lng'   => $startLng,
-                'end_lat'     => $endLat,
-                'end_lng'     => $endLng,
-                'avoid_flood' => $avoidFlood,
-                'intensity'   => $intensity,
-                'duration'    => $duration,
-            ]);
+            $response = Http::timeout($timeout)->get($this->modelUrl($path), $query);
+        } catch (ConnectionException $e) {
+            SystemMonitor::recordRequest($path, $elapsed(), false);
+            return response()->json(['error' => 'The flood model server is not running. Start it with: '
+                . 'uvicorn model_api:app --host 127.0.0.1 --port 8001'], 503);
+        }
+        // Client errors (e.g. a point outside the map) are the user's input, not a system failure
+        SystemMonitor::recordRequest($path, $elapsed(), $response->status() < 500);
 
-            if ($response->successful()) {
-                return response($response->body())->header('Content-Type', 'application/json');
-            }
-        } catch (\Exception $e) {
-            return response()->json(['error' => 'Routing engine unreachable: ' . $e->getMessage()], 500);
+        if ($response->failed()) {
+            $detail = $response->json('detail') ?? 'Model server error';
+            return response()->json(['error' => is_string($detail) ? $detail : 'Invalid request'], $response->status());
         }
 
-        return response()->json(['type' => 'FeatureCollection', 'features' => []]);
+        return response($response->body(), 200)
+            ->header('Content-Type', $response->header('Content-Type') ?: 'application/json');
+    }
+
+    public function predict(Request $request)
+    {
+        return $this->forward('/predict', $this->storm($request), self::PREDICT_TIMEOUT);
+    }
+
+    public function overlay(Request $request)
+    {
+        return $this->forward('/overlay.png', $this->storm($request), self::PREDICT_TIMEOUT)
+            ->header('Cache-Control', 'public, max-age=3600');
+    }
+
+    public function zones(Request $request)
+    {
+        return $this->forward('/zones', $this->storm($request), self::PREDICT_TIMEOUT)
+            ->header('Cache-Control', 'public, max-age=3600');
+    }
+
+    public function extent(Request $request)
+    {
+        return $this->forward('/extent', $this->storm($request), self::PREDICT_TIMEOUT)
+            ->header('Cache-Control', 'public, max-age=3600');
+    }
+
+    public function pointInfo(Request $request)
+    {
+        return $this->forward('/point', $this->point($request) + $this->storm($request), self::PREDICT_TIMEOUT);
+    }
+
+    public function explain(Request $request)
+    {
+        return $this->forward('/explain', $this->point($request) + $this->storm($request), self::PREDICT_TIMEOUT);
+    }
+
+    public function route(Request $request)
+    {
+        $v = $request->validate([
+            'start_lat' => 'required|numeric|between:-1.6,-1.0',
+            'start_lng' => 'required|numeric|between:36.5,37.3',
+            'end_lat'   => 'required|numeric|between:-1.6,-1.0',
+            'end_lng'   => 'required|numeric|between:36.5,37.3',
+            'vehicle'   => 'required|string|in:boda_boda,saloon,large_car,suv_4x4,lorry_bus',
+        ]);
+        return $this->forward('/route', $v + $this->storm($request), self::PREDICT_TIMEOUT);
+    }
+
+    public function subcounties()
+    {
+        return $this->forward('/subcounties', [])->header('Cache-Control', 'public, max-age=86400');
+    }
+
+    public function modelInfo()
+    {
+        return $this->forward('/health', []);
     }
 }

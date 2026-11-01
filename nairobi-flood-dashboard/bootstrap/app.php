@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\HasRole;
 use App\Http\Middleware\IsAdmin;
 use App\Http\Middleware\TrackTraffic;
 use Illuminate\Foundation\Application;
@@ -21,6 +22,7 @@ return Application::configure(basePath: dirname(__DIR__))
         // Register the 'admin' route alias
         $middleware->alias([
             'admin' => IsAdmin::class,
+            'role' => HasRole::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
