@@ -14,6 +14,10 @@ class IsAdmin
             return $next($request);
         }
 
-        return redirect()->route('admin.login')->withErrors(['email' => 'Admin authorization required.']);
+        // One sign-in for everyone: guests go to Google and come back here afterwards
+        if (!Auth::check()) {
+            return redirect()->guest(route('login.google'));
+        }
+        return redirect('/')->with('error', 'The System Console is for administrators only.');
     }
 }

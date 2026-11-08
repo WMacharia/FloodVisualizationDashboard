@@ -2,6 +2,8 @@
 
 use App\Http\Middleware\HasRole;
 use App\Http\Middleware\IsAdmin;
+use App\Http\Middleware\RequireRecentSignIn;
+use App\Http\Middleware\StaffIdleTimeout;
 use App\Http\Middleware\TrackTraffic;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -16,6 +18,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware) {
         // Register global web middleware
         $middleware->web(append: [
+            StaffIdleTimeout::class,
             TrackTraffic::class,
         ]);
 
@@ -23,6 +26,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'admin' => IsAdmin::class,
             'role' => HasRole::class,
+            'reconfirm' => RequireRecentSignIn::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

@@ -9,6 +9,9 @@ numpy==2.5.3
 scipy==1.18.1
 opencv-python==5.0.0.93
 rasterio==1.5.1
+# Faster CPU inference (optional: the server falls back to PyTorch without them)
+onnxruntime==1.31.1
+onnx==1.23.2
 
 # Simulation, dataset and dashboard layers
 numba==0.67.0

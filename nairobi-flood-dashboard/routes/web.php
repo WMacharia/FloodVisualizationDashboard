@@ -13,7 +13,7 @@ Route::get('/', function () {
 });
 
 // Map data, proxied to the Python model server (scripts/model_api.py)
-Route::prefix('api')->middleware('throttle:120,1')->group(function () {
+Route::prefix('api')->middleware('throttle:api')->group(function () {
     Route::get('/flood/predict', [MapController::class, 'predict']);
     Route::get('/flood/overlay.png', [MapController::class, 'overlay']);
     Route::get('/flood/zones', [MapController::class, 'zones']);
@@ -38,22 +38,30 @@ Route::prefix('api')->middleware('throttle:120,1')->group(function () {
     });
 });
 
-// Standard User Google OAuth Routes
-Route::get('/auth/google', [AuthController::class, 'redirectToGoogle'])->name('login.google');
-Route::get('/auth/google/callback', [AuthController::class, 'handleGoogleCallback']);
+// Sign-in: everyone uses Google (no passwords are stored). Rate limited per IP / user.
+Route::middleware('throttle:sign-in')->group(function () {
+    Route::get('/auth/google', [AuthController::class, 'redirectToGoogle'])->name('login.google');
+    Route::get('/auth/google/callback', [AuthController::class, 'handleGoogleCallback']);
+});
+// Staff confirm it is them (Google again) before sensitive actions
+Route::get('/auth/reconfirm', [AuthController::class, 'reconfirm'])
+    ->middleware(['auth', 'throttle:reconfirm'])->name('auth.reconfirm');
+// Activity ping from open staff pages (keeps an in-use session from timing out)
+Route::post('/auth/activity', fn () => response()->noContent())->middleware(['auth', 'throttle:activity']);
 
-// Admin Email/Password Login Routes (Now directly on /admin)
-Route::get('/admin', [AuthController::class, 'showAdminLoginForm'])->name('admin.login');
-Route::post('/admin', [AuthController::class, 'adminLogin'])->name('admin.login.submit');
-Route::post('/admin/logout', [AuthController::class, 'adminLogout'])->name('admin.logout');
-
-// Protected Admin Dashboard Routes
-Route::middleware(['auth', 'admin'])->group(function () {
+// Protected Admin Dashboard Routes. There is no separate staff sign-in page: everyone uses the
+// map's Google sign-in, and the role on the account decides what they can open.
+Route::middleware('admin')->group(function () {
+    Route::get('/admin', fn () => redirect()->route('admin.index'));
     Route::get('/admin/dashboard', [AdminController::class, 'index'])->name('admin.index');
-    Route::delete('/admin/users/{user}', [AdminController::class, 'destroy'])->name('admin.users.destroy');
-    Route::patch('/admin/users/{user}/role', [AdminController::class, 'updateRole'])->name('admin.users.role');
     Route::post('/admin/advisories/{alert}/withdraw', [AdminController::class, 'withdraw'])->name('admin.advisories.withdraw');
     Route::get('/admin/health', [AdminController::class, 'healthJson'])->name('admin.health');
+
+    // Changing who can do what needs a recent Google sign-in
+    Route::middleware('reconfirm')->group(function () {
+        Route::delete('/admin/users/{user}', [AdminController::class, 'destroy'])->name('admin.users.destroy');
+        Route::patch('/admin/users/{user}/role', [AdminController::class, 'updateRole'])->name('admin.users.role');
+    });
 });
 
 Route::post('/logout', [AuthController::class, 'logout'])->name('logout');

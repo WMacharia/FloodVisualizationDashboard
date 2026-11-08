@@ -73,4 +73,25 @@ class User extends Authenticatable
     {
         return $this->hasMany(SavedPlace::class);
     }
+
+    // The system must always keep at least one administrator, whichever way a change is made
+    // (console, command line or code), so it can never lock itself out.
+    protected static function booted(): void
+    {
+        static::updating(function (User $user) {
+            if ($user->isDirty('role') && $user->getOriginal('role') === 'admin' && static::isLastAdmin($user)) {
+                throw new \DomainException('This is the only administrator account, so it cannot lose the admin role. Grant another administrator first.');
+            }
+        });
+        static::deleting(function (User $user) {
+            if ($user->getOriginal('role') === 'admin' && static::isLastAdmin($user)) {
+                throw new \DomainException('This is the only administrator account, so it cannot be deleted. Grant another administrator first.');
+            }
+        });
+    }
+
+    private static function isLastAdmin(User $user): bool
+    {
+        return !static::where('role', 'admin')->whereKeyNot($user->getKey())->exists();
+    }
 }

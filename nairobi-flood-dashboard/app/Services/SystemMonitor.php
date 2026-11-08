@@ -134,8 +134,9 @@ class SystemMonitor
         }
         if (!$times) return null;
 
-        $peak = 0;
-        foreach ($rain as $k => $v) if ($v > $rain[$peak]) $peak = $k;
+        // Peak over the coming hours only (index 0 is the hour that has just passed)
+        $peak = count($rain) > 1 ? 1 : 0;
+        foreach ($rain as $k => $v) if ($k > $peak && $v > $rain[$peak]) $peak = $k;
         // Storm = the run of consecutive hours at or above the warning level around the peak
         [$a, $b] = [$peak, $peak];
         while ($a > 0 && $rain[$a - 1] >= self::RAIN_WARNING_MMHR) $a--;

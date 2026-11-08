@@ -7,11 +7,13 @@ and serves everything the dashboard shows:
   GET /health                    model, metrics and vehicle limits
   GET /predict                   storm summary: sub-county ranking, hotspots, exposed buildings/facilities
   GET /overlay.png               flood depth map (light blue -> red), transparency = flood probability
-  GET /zones                     hazard zones: hexagons (~10 ha) coloured by the deepest water covering 10% of them
+  GET /zones                     hazard zones: hexagons (~350 m across) coloured by the deepest water covering 10% of them
   GET /extent                    flood outlines as polygons, one layer per depth band
   GET /point                     values at one location + which vehicles can pass
   GET /explain                   which inputs drove the prediction at one location (ablation)
-  GET /route                     vehicle-aware safe route on the OpenStreetMap road network
+  GET /route                     vehicle-aware safe route on the OpenStreetMap road network (limits include
+                                 the safety margins from 11_calibrate_vehicle_margins.py), plus a similar
+                                 alternative route when one exists
   GET /subcounties               sub-county outlines
 
 Every endpoint takes the storm (intensity mm/hr, duration hr) as parameters, so results never
@@ -42,23 +44,41 @@ from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import dijkstra
 from scipy.spatial import cKDTree
 
+try:   # optional: runs the U-Net ~1.4x faster on CPU; PyTorch is used if it is not installed
+    import onnxruntime as ort
+except ImportError:
+    ort = None
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(BASE_DIR, "models")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DASH_DIR = os.path.join(DATA_DIR, "dashboard")
 
-CACHE_STORMS = 8
+CACHE_STORMS = 12               # storms kept in memory (~25 MB each)
+INFER_GRID = (2, 2)             # tiles down x across: 2x2 tiles (~592x880) need ~40% fewer cells than the notebook's
+                                # 512x512 tiles for the same held-out test IoU (0.7540 vs 0.7537)
+WARM_STORMS = [(30, 2.0), (20, 2.0), (35, 2.0), (50, 3.0), (90, 3.0)]   # dashboard default + presets, made at start-up
+PRED_CACHE_DIR = os.path.join(DATA_DIR, "cache", "predictions")         # every computed storm is also kept on disk
+MAX_DISK_STORMS = 60                                                    # ~18 MB each; the oldest are deleted first
 EXPOSURE_DEPTH_M = 0.3          # buildings/facilities counted as exposed above this depth
+REPORT_DEPTH_CAP_M = 2.0        # depths are reported up to 2 m (">2 m" beyond): every decision threshold is lower, and
+                                # with no drains or soakage modelled, deeper simulated ponds are not reliable
+HOLLOW_SINK_M = 1.0             # cells in a closed terrain depression deeper than this are flagged as closed hollows
 CAUTION_TIME_FACTOR = 3.0       # passable but flooded roads cost 3x their travel time (assumption)
 MAX_SNAP_M = 1500.0             # start/end must be within this distance of a road
 EXPLAIN_CROP = 256
 HOTSPOT_BLOCK = 33              # cells per side of a hotspot square (~1 km)
 BRIDGE_APPROACH_CELLS = 2       # ~60 m either side of an OSM bridge treated as its approach
-LONG_DETOUR_RATIO = 2.0         # safe route taking more than 2x the direct time gets a "consider waiting" advisory
+LONG_DETOUR_RATIO = 2.0         # safe route over 2x the direct route's length gets a "consider waiting" advisory
+ALT_PENALTY = 3.0               # alternative route: the best route's roads cost 3x while searching for it ...
+ALT_MAX_COST_RATIO = 1.25       # ... and it is offered only if it costs at most 25% more than the best route
+ALT_MAX_SHARED = 0.6            # ... and shares at most 60% of its length with it
 PERMANENT_WATER_CLASS = 80      # ESA WorldCover: dams/lakes are not shown as flooding
-ZONE_RADIUS_M = 200.0           # hexagon centre-to-corner distance: ~10 ha, ~118 cells
+ZONE_RADIUS_M = 200.0           # hexagon centre-to-corner distance: ~350 m across (side to side), ~10 ha, ~118 cells
 ZONE_MIN_SHARE = 0.10           # a depth band sets a zone's level once it covers 10% of the zone
-ZONE_LEVELS = ["minor", "moderate", "high", "very_high", "severe"]   # minor = some flooding, under 10%
+# Named to match their colours: low (blue, 15-30 cm), moderate (yellow, 30-60 cm), high (orange, 0.6-1.2 m),
+# severe (red, >1.2 m); minor = some flooding, but no band covers 10% of the zone (not drawn)
+ZONE_LEVELS = ["minor", "low", "moderate", "high", "severe"]
 EXTENT_UPSAMPLE = 3             # outlines are traced on a 10 m grid ...
 EXTENT_SIGMA_CELLS = 0.7        # ... after a light blur of each depth band
 EXTENT_SIMPLIFY_M = 15.0        # then simplified to 15 m (half a cell); the browser rounds the corners
@@ -160,6 +180,7 @@ def load_everything():
     S.temperature = float(S.cfg["temperature"])
     S.threshold = float(S.cfg["threshold"])
     S.flood_depth = float(S.cfg["flood_depth_m"])
+    S.margins = load_vehicle_margins()
 
     d = np.load(os.path.join(DATA_DIR, "surrogate", "static_inputs.npz"))
     channels = [str(c) for c in d["channels"]]
@@ -168,6 +189,9 @@ def load_everything():
     if not np.allclose(d["stats_mean"], S.cfg["stats_mean"], rtol=1e-3, atol=1e-4):
         raise RuntimeError("static_inputs.npz was normalised differently from the model's training data - rebuild with 09")
     S.static = torch.from_numpy(d["static"].astype(np.float32))
+    # Closed hollows (quarries, terrain-data pits): the simulator fills them because nothing drains them
+    k = channels.index("sink_depth")
+    S.hollow = (d["static"][k].astype(np.float32) * d["stats_std"][k] + d["stats_mean"][k]) >= HOLLOW_SINK_M
     S.cn = d["cn"].astype(np.float32)
     S.H, S.W = S.cn.shape
     a, b, c, dd, e, f = d["transform"]
@@ -206,6 +230,64 @@ def load_everything():
     S.approach_exempt = bridge_approach_exemptions()
     build_zone_grid()
     torch.set_num_threads(max(1, os.cpu_count() or 1))
+    S.ort = onnx_session()
+
+
+def model_tag():
+    """Identifies the model file, so cached predictions and ONNX copies are never reused for a different model."""
+    size = os.path.getsize(os.path.join(MODEL_DIR, "unet_surrogate.pth"))
+    return f"m{S.cfg.get('best_val_iou', 0):.6f}_{size}".replace(".", "")
+
+
+def onnx_session():
+    """
+    ONNX Runtime copy of the U-Net for whole-grid tiles: same results as PyTorch (max depth difference 0.03 mm)
+    in ~4.8 s instead of ~7.1 s for the whole city. Exported once to data/cache/. None = use PyTorch.
+    """
+    if ort is None:
+        return None
+    M = int(S.cfg["infer_margin"])
+    th, tw = tile_size(S.H, INFER_GRID[0], M), tile_size(S.W, INFER_GRID[1], M)
+    path = os.path.join(DATA_DIR, "cache", f"unet_{model_tag()}_{th}x{tw}.onnx")
+    try:
+        if not os.path.exists(path):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with torch.inference_mode():
+                torch.onnx.export(S.net, torch.zeros(1, S.cfg["in_channels"], th, tw), path + ".tmp",
+                                  input_names=["x"], output_names=["y"], opset_version=17, dynamo=False)
+            os.replace(path + ".tmp", path)
+        opts = ort.SessionOptions()
+        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        return ort.InferenceSession(path, opts, providers=["CPUExecutionProvider"])
+    except Exception as e:
+        print(f"[WARN] ONNX Runtime unavailable ({type(e).__name__}: {e}); using PyTorch")
+        return None
+
+
+def load_vehicle_margins():
+    """
+    Safety margins from 11_calibrate_vehicle_margins.py, fitted for this model. Without the file, or if it was
+    fitted for a different model, the published limits are applied as they are.
+    """
+    path = os.path.join(DATA_DIR, "validation", "vehicle_margins.json")
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as fh:
+        m = json.load(fh)
+    if m.get("model_best_val_iou") != S.cfg.get("best_val_iou"):
+        print("[WARN] vehicle_margins.json was fitted for another model - using the published limits; re-run 11")
+        return {}
+    return {k: v for k, v in m["vehicles"].items() if k in S.vehicles}
+
+
+def decision_limits(key):
+    """Limits the dashboard applies for a vehicle: the published limit scaled by its safety margin."""
+    v, m = S.vehicles[key], S.margins.get(key, {})
+    f = float(m.get("factor", 1.0))
+    return {"prob": float(m.get("prob_threshold", S.threshold)),
+            "depth_m": round(v["depth_m"] * f, 3),
+            "dv_m2s": round(v["dv_m2s"] * f, 3) if v["dv_m2s"] is not None else None,
+            "factor": f}
 
 
 def build_zone_grid():
@@ -320,19 +402,27 @@ def decode(out):
     return prob, depth, dv
 
 
+def tile_size(n, k, margin):
+    """Smallest tile (a multiple of 16, as the U-Net needs) that covers n cells in k tiles overlapping by 2*margin."""
+    return int(math.ceil((n + 2 * margin * (k - 1)) / k / 16) * 16)
+
+
 def predict_full(i, dh):
-    """Whole-grid prediction with overlapping tiles (as in the notebook)."""
+    """Whole-grid prediction with overlapping tiles; each tile's outer `margin` cells are discarded (no seams)."""
     x = torch.cat([S.static, storm_channels(i, dh)], 0)
-    T, M = int(S.cfg["infer_tile"]), int(S.cfg["infer_margin"])
+    M = int(S.cfg["infer_margin"])
     H, W = S.H, S.W
+    TH, TW = tile_size(H, INFER_GRID[0], M), tile_size(W, INFER_GRID[1], M)
     out_full = np.zeros((S.cfg["out_channels"], H, W), np.float32)
-    ys = list(range(0, H - T, T - 2 * M)) + [H - T]
-    xs = list(range(0, W - T, T - 2 * M)) + [W - T]
+    ys = list(range(0, H - TH, TH - 2 * M)) + [H - TH]
+    xs = list(range(0, W - TW, TW - 2 * M)) + [W - TW]
     for y0 in ys:
         for x0 in xs:
-            out = run_net(x[:, y0:y0 + T, x0:x0 + T])
-            ya, yb = y0 + (M if y0 > 0 else 0), y0 + T - (M if y0 + T < H else 0)
-            xa, xb = x0 + (M if x0 > 0 else 0), x0 + T - (M if x0 + T < W else 0)
+            tile = x[:, y0:y0 + TH, x0:x0 + TW]
+            out = (S.ort.run(None, {"x": np.ascontiguousarray(tile[None].numpy())})[0][0]
+                   if S.ort is not None else run_net(tile))
+            ya, yb = y0 + (M if y0 > 0 else 0), y0 + TH - (M if y0 + TH < H else 0)
+            xa, xb = x0 + (M if x0 > 0 else 0), x0 + TW - (M if x0 + TW < W else 0)
             out_full[:, ya:yb, xa:xb] = out[:, ya - y0:yb - y0, xa - x0:xb - x0]
     prob, depth, dv = decode(out_full)
     prob = np.where(S.show, prob, 0.0).astype(np.float32)
@@ -350,6 +440,39 @@ def cached_keys():
         return [list(k) for k in _cache.keys()]
 
 
+def disk_cache_path(i, dh):
+    # Named after the model and tiling, so a retrained model never reads another model's predictions
+    return os.path.join(PRED_CACHE_DIR, f"{model_tag()}_t{INFER_GRID[0]}x{INFER_GRID[1]}_i{i:03d}_d{dh:g}.npz")
+
+
+def load_from_disk(i, dh):
+    path = disk_cache_path(i, dh)
+    if not os.path.exists(path):
+        return None
+    try:
+        with np.load(path) as f:
+            prob, depth = f["prob"], f["depth"]
+            dv = f["dv"] if "dv" in f.files else None
+    except Exception:   # a damaged file is simply recomputed
+        return None
+    return {"prob": prob, "depth": depth, "dv": dv, "flooded": prob >= S.threshold}
+
+
+def save_to_disk(i, dh, maps):
+    path = disk_cache_path(i, dh)
+    os.makedirs(PRED_CACHE_DIR, exist_ok=True)
+    tmp = path + ".tmp.npz"
+    arrays = {"prob": maps["prob"], "depth": maps["depth"]}
+    if maps["dv"] is not None:
+        arrays["dv"] = maps["dv"]
+    np.savez_compressed(tmp, **arrays)
+    os.replace(tmp, path)
+    files = sorted((os.path.join(PRED_CACHE_DIR, f) for f in os.listdir(PRED_CACHE_DIR) if f.endswith(".npz")),
+                   key=os.path.getmtime)
+    for old in files[:-MAX_DISK_STORMS]:
+        os.remove(old)
+
+
 def get_maps(i, dh):
     key = (i, dh)
     with _cache_lock:
@@ -364,7 +487,10 @@ def get_maps(i, dh):
             z = np.zeros((S.H, S.W), np.float32)
             maps = {"prob": z, "depth": z, "dv": z if S.has_dv else None, "flooded": z > 0}
         else:
-            maps = predict_full(i, dh)
+            maps = load_from_disk(i, dh)
+            if maps is None:
+                maps = predict_full(i, dh)
+                threading.Thread(target=save_to_disk, args=(i, dh, maps), daemon=True).start()
         maps["edges"] = {}
         with _cache_lock:
             _cache[key] = maps
@@ -421,7 +547,7 @@ def zone_props(z, k):
     return {"level": ZONE_LEVELS[lv] if lv >= 0 else "none",
             "flooded_pct": round(float(z["flooded_pct"][k]), 1),
             "flooded_ha": round(float(z["flooded_ha"][k]), 1),
-            "max_depth_m": round(float(z["max_depth"][k]), 2),
+            "max_depth_m": report_depth(z["max_depth"][k]),
             "buildings_exposed": int(z["buildings"][k])}
 
 
@@ -482,7 +608,12 @@ def nearest_place(lat, lng, max_m=2500.0):
 
 
 def depth_label(m):
-    return ">2 m" if m > 2 else f"{m:.2f} m"
+    return ">2 m" if m > REPORT_DEPTH_CAP_M else f"{m:.2f} m"
+
+
+def report_depth(m):
+    """Depth as reported to users: capped at REPORT_DEPTH_CAP_M (the model output itself is not changed)."""
+    return round(min(float(m), REPORT_DEPTH_CAP_M), 2)
 
 
 def summarise(maps, i, dh):
@@ -501,7 +632,7 @@ def summarise(maps, i, dh):
             "flooded_pct": round(100.0 * f.sum() / max(n, 1), 1),
             "deep_km2": round(float((f & (depth > 0.6)).sum()) * S.cell_km2, 2),
             "buildings_exposed": int(S.bcount[exposed & m].sum()),
-            "p90_depth_m": round(float(np.percentile(depth[f], 90)), 2) if f.any() else 0.0,
+            "p90_depth_m": report_depth(np.percentile(depth[f], 90)) if f.any() else 0.0,
         })
     subs.sort(key=lambda s: (s["buildings_exposed"], s["flooded_km2"]), reverse=True)
 
@@ -534,18 +665,24 @@ def summarise(maps, i, dh):
             "subcounty": S.subcounty_names[sc - 1] if sc else None,
             "lat": round(lat, 5), "lng": round(lng, 5),
             "area_ha": round(int(b_area[bi, bj]) * S.cell_km2 * 100, 1),
-            "p90_depth_m": round(p90, 2), "depth_label": depth_label(p90),
+            "deep_share_pct": round(100.0 * int(b_area[bi, bj]) / (B * B)),   # share of the 1 km square deeper than 30 cm
+            "p90_depth_m": report_depth(p90), "depth_label": depth_label(p90),
             "buildings_exposed": int(b_build[bi, bj]),
         })
 
     fac = []
     fc = S.fac_cells
     hit = np.flatnonzero((fc >= 0) & exposed.ravel()[np.maximum(fc, 0)])
+    hollow = S.hollow.ravel()
     for j in hit:
         p = S.facilities[j]
         dj = float(depth.ravel()[fc[j]])
-        fac.append({**p, "depth_m": round(dj, 2), "depth_label": depth_label(dj)})
-    fac.sort(key=lambda p: -p["depth_m"])
+        fac.append({**p, "depth_m": report_depth(dj), "depth_label": depth_label(dj),
+                    "closed_hollow": bool(hollow[fc[j]]), "_raw": dj})
+    # Deepest first; among equal (capped) depths, sites in closed hollows (uncertain depth) come last
+    fac.sort(key=lambda p: (-p["depth_m"], p["closed_hollow"], -p["_raw"]))
+    for p in fac:
+        del p["_raw"]
 
     zl = zone_stats(maps)["level"]
     zone_counts = {name: int((zl == k).sum()) for k, name in enumerate(ZONE_LEVELS) if k >= 1}
@@ -569,16 +706,19 @@ def summarise(maps, i, dh):
     }
 
 
-def vehicle_verdicts(depth, dv, flooded):
+def vehicle_verdicts(depth, dv, prob):
+    """safe / caution (flooded but within the limits) / unsafe, using the limits with safety margins."""
     out = {}
+    flooded = prob >= S.threshold
     for key, v in S.vehicles.items():
-        if not flooded:
+        lim = decision_limits(key)
+        if v["dv_m2s"] is None:
+            state = "unsafe" if prob >= lim["prob"] else "safe"
+        elif not flooded:
             state = "safe"
-        elif v["dv_m2s"] is None:
-            state = "unsafe"
         else:
-            too_deep = depth > v["depth_m"]
-            too_fast = dv is not None and dv > v["dv_m2s"]
+            too_deep = depth > lim["depth_m"]
+            too_fast = dv is not None and dv > lim["dv_m2s"]
             state = "unsafe" if (too_deep or too_fast) else "caution"
         out[key] = state
     return out
@@ -606,17 +746,19 @@ def edge_hazard(maps):
 
     maps["edges"]["max_depth"] = per_edge(dep)
     maps["edges"]["any_flood"] = per_edge(fl.astype(np.float32)) > 0
+    maps["edges"]["max_prob"] = per_edge(maps["prob"].ravel())
     maps["edges"]["max_dv"] = per_edge(np.where(fl, maps["dv"].ravel(), 0.0)) if maps["dv"] is not None else None
     return maps["edges"]
 
 
-def edge_states(hz, v):
+def edge_states(hz, key):
+    v, lim = S.vehicles[key], decision_limits(key)
     if v["dv_m2s"] is None:
-        unsafe = hz["any_flood"].copy()
+        unsafe = hz["max_prob"] >= lim["prob"]
     else:
-        unsafe = hz["max_depth"] > v["depth_m"]
+        unsafe = hz["max_depth"] > lim["depth_m"]
         if hz["max_dv"] is not None:
-            unsafe |= hz["max_dv"] > v["dv_m2s"]
+            unsafe |= hz["max_dv"] > lim["dv_m2s"]
     caution = hz["any_flood"] & ~unsafe
     return unsafe, caution
 
@@ -653,6 +795,26 @@ def shortest_path(a, b, weight, allowed):
     return [(int(lookup[p, q]) - 1, p, q) for p, q in zip(nodes[:-1], nodes[1:])]
 
 
+def alternative_path(a, b, weight, allowed, best):
+    """
+    A second safe route that is close to the best one in routing cost but takes different roads
+    (penalty method: search again with the best route's roads made more expensive). None if there isn't one.
+    """
+    e_best = np.array([p[0] for p in best], dtype=np.int64)
+    penalised = weight.copy()
+    penalised[e_best] *= ALT_PENALTY
+    alt = shortest_path(a, b, penalised, allowed)
+    if alt is None:
+        return None, None
+    e_alt = np.array([p[0] for p in alt], dtype=np.int64)
+    ratio = float(weight[e_alt].sum() / max(weight[e_best].sum(), 1e-9))
+    length = S.g["edge_len_m"]
+    shared = float(length[np.intersect1d(e_alt, e_best)].sum() / max(length[e_alt].sum(), 1e-9))
+    if ratio > ALT_MAX_COST_RATIO or shared > ALT_MAX_SHARED:
+        return None, None
+    return alt, {"cost_ratio": round(ratio, 2), "shared_share": round(shared, 2)}
+
+
 def path_geometry(path):
     g = S.g
     coords = []
@@ -669,10 +831,9 @@ def path_stats(path, hz, unsafe, caution):
     e = np.array([p[0] for p in path], dtype=np.int64)
     return {
         "distance_km": round(float(g["edge_len_m"][e].sum()) / 1000, 2),
-        "duration_min": round(float(g["edge_time_s"][e].sum()) / 60, 1),
         "unsafe_segments": int(unsafe[e].sum()),
         "flooded_length_m": int(g["edge_len_m"][e][caution[e] | unsafe[e]].sum()),
-        "max_depth_m": round(float(hz["max_depth"][e].max()), 2) if len(e) else 0.0,
+        "max_depth_m": report_depth(hz["max_depth"][e].max()) if len(e) else 0.0,
     }
 
 
@@ -691,8 +852,27 @@ async def lifespan(app):
     load_everything()
     print(f"[OK] U-Net surrogate loaded ({S.cfg['in_channels']} inputs, {S.cfg['out_channels']} outputs, "
           f"DV head: {S.has_dv}); grid {S.H}x{S.W}; {len(S.g['edge_u']):,} road segments")
-    threading.Thread(target=get_maps, args=(30, 2.0), daemon=True).start()   # warm the dashboard default
+    threading.Thread(target=warm_presets, daemon=True).start()
     yield
+
+
+def warm_presets():
+    """Prepare the dashboard default and the presets in the background, so they open instantly."""
+    for i, dh in WARM_STORMS:
+        try:
+            maps = get_maps(i, dh)
+            summary(maps, i, dh)
+            zones_geojson(maps)
+            extent_polygons(maps)
+        except Exception as e:   # warming is an optimisation; a failure here must not stop the server
+            print(f"[WARN] could not prepare storm {i} mm/h x {dh} h: {e}")
+    print(f"[OK] presets ready: {', '.join(f'{i}x{dh:g}' for i, dh in WARM_STORMS)}")
+
+
+def summary(maps, i, dh):
+    if "summary" not in maps:
+        maps["summary"] = summarise(maps, i, dh)
+    return maps["summary"]
 
 
 app = FastAPI(title="Nairobi Flood DSS model server", lifespan=lifespan)
@@ -712,21 +892,22 @@ def health():
             "test_iou_unseen_storms": m.get("test_blocks_heldout_storms", {}).get("IoU"),
             "baselines": m.get("baselines"), "calibration": m.get("calibration"),
             "vehicle_metrics": m.get("vehicles"),
+            # test-block scores (training storms) with the safety margins actually applied
+            "vehicle_metrics_with_margin": {k: v["test"]["with_margin"]["training_storms"] for k, v in S.margins.items()} or None,
             "resolution_m": 30, "training_storms": "10-120 mm/hr, 1-6 h",
+            "depth_report_cap_m": REPORT_DEPTH_CAP_M,
         },
         "dv_available": S.has_dv,
-        "vehicles": S.vehicles,
+        "vehicles": {k: {**v, "applied": decision_limits(k)} for k, v in S.vehicles.items()},
         "cached_storms": cached_keys(),
+        "inference_engine": "ONNX Runtime" if S.ort is not None else "PyTorch",
     }
 
 
 @app.get("/predict")
 def predict(intensity: float = Query(..., ge=0), duration: float = Query(..., gt=0)):
     i, dh, notes = normalise_storm(intensity, duration)
-    res = summarise(get_maps(i, dh), i, dh)
-    res["notes"] = notes
-    res["dv_available"] = S.has_dv
-    return res
+    return {**summary(get_maps(i, dh), i, dh), "notes": notes, "dv_available": S.has_dv}
 
 
 @app.get("/overlay.png")
@@ -741,7 +922,10 @@ def overlay(intensity: float = Query(..., ge=0), duration: float = Query(..., gt
 @app.get("/zones")
 def zones(intensity: float = Query(..., ge=0), duration: float = Query(..., gt=0)):
     i, dh, _ = normalise_storm(intensity, duration)
-    maps = get_maps(i, dh)
+    return zones_geojson(get_maps(i, dh))
+
+
+def zones_geojson(maps):
     if "zones_geojson" not in maps:
         z = zone_stats(maps)
         features = [{"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [S.zone_ring[k].tolist()]},
@@ -750,6 +934,7 @@ def zones(intensity: float = Query(..., ge=0), duration: float = Query(..., gt=0
         maps["zones_geojson"] = {
             "type": "FeatureCollection", "features": features,
             "properties": {"zone_area_ha": round(1.5 * math.sqrt(3) * ZONE_RADIUS_M ** 2 / 1e4, 1),
+                           "zone_across_m": round(math.sqrt(3) * ZONE_RADIUS_M),
                            "min_share": ZONE_MIN_SHARE, "levels": ZONE_LEVELS},
         }
     return maps["zones_geojson"]
@@ -785,11 +970,13 @@ def point(lat: float, lng: float, intensity: float = Query(..., ge=0), duration:
         "permanent_water": bool(S.perm_water.ravel()[c]),
         "flood_probability": round(prob, 3),
         "flooded": flooded,
-        "depth_m": round(depth, 2) if flooded else 0.0,
+        "depth_m": report_depth(depth) if flooded else 0.0,
         "depth_label": depth_label(depth) if flooded else "dry",
+        "depth_capped": bool(flooded and depth > REPORT_DEPTH_CAP_M),
+        "closed_hollow": bool(S.hollow.ravel()[c]),
         "dv_m2s": round(dv, 3) if (dv is not None and flooded) else (0.0 if dv is not None else None),
         "buildings_in_cell": int(S.bcount.ravel()[c]),
-        "vehicles": vehicle_verdicts(depth, dv, flooded),
+        "vehicles": vehicle_verdicts(depth, dv, prob),
         "zone": zone_props(zone_stats(maps), int(S.zone_id[c])),
     }
 
@@ -872,14 +1059,15 @@ def route(start_lat: float, start_lng: float, end_lat: float, end_lng: float,
 
     maps = get_maps(i, dh)
     hz = edge_hazard(maps)
-    unsafe, caution = edge_states(hz, v)
+    unsafe, caution = edge_states(hz, vehicle)
     t = S.g["edge_time_s"].astype(np.float64)
     all_edges = np.ones(len(t), dtype=bool)
 
     direct = shortest_path(a, b, t, all_edges)
     if direct is None:
         raise HTTPException(404, "No road connection between these points")
-    safe = shortest_path(a, b, np.where(caution, t * CAUTION_TIME_FACTOR, t), ~unsafe)
+    weight = np.where(caution, t * CAUTION_TIME_FACTOR, t)
+    safe = shortest_path(a, b, weight, ~unsafe)
 
     d_stats = path_stats(direct, hz, unsafe, caution)
     features = []
@@ -891,12 +1079,18 @@ def route(start_lat: float, start_lng: float, end_lat: float, end_lng: float,
     else:
         s_stats = path_stats(safe, hz, unsafe, caution)
         status = "clear" if d_stats["unsafe_segments"] == 0 else "detour"
-        if status == "detour" and s_stats["duration_min"] > LONG_DETOUR_RATIO * d_stats["duration_min"]:
-            advisory = (f"The safe route takes {s_stats['duration_min']:.0f} min instead of "
-                        f"{d_stats['duration_min']:.0f} min. Consider waiting for the water to recede.")
+        if status == "detour" and s_stats["distance_km"] > LONG_DETOUR_RATIO * d_stats["distance_km"]:
+            advisory = (f"The safe route is {s_stats['distance_km']:.1f} km, about "
+                        f"{s_stats['distance_km'] / d_stats['distance_km']:.1f}x the direct route "
+                        f"({d_stats['distance_km']:.1f} km). Consider waiting for the water to recede.")
         features.append({"type": "Feature",
                          "geometry": {"type": "LineString", "coordinates": path_geometry(safe)},
                          "properties": {"route_type": "safe", **s_stats}})
+        alt, alt_info = alternative_path(a, b, weight, ~unsafe, safe)
+        if alt is not None:
+            features.append({"type": "Feature",
+                             "geometry": {"type": "LineString", "coordinates": path_geometry(alt)},
+                             "properties": {"route_type": "alternative", **path_stats(alt, hz, unsafe, caution), **alt_info}})
     if status != "clear":
         features.append({"type": "Feature",
                          "geometry": {"type": "LineString", "coordinates": path_geometry(direct)},
@@ -907,7 +1101,7 @@ def route(start_lat: float, start_lng: float, end_lat: float, end_lng: float,
                                  "geometry": {"type": "LineString", "coordinates": path_geometry([(e, p, q)])},
                                  "properties": {"route_type": "hazard",
                                                 "road": str(S.g["edge_name"][e]) or str(S.g["edge_class"][e]),
-                                                "max_depth_m": round(float(hz["max_depth"][e]), 2),
+                                                "max_depth_m": report_depth(hz["max_depth"][e]),
                                                 "max_dv_m2s": round(float(hz["max_dv"][e]), 2) if hz["max_dv"] is not None else None}})
     if not S.has_dv and v["dv_m2s"] is not None:
         notes.append("Water speed is not available in this model version: only the depth limit is applied.")
@@ -917,10 +1111,12 @@ def route(start_lat: float, start_lng: float, end_lat: float, end_lng: float,
         "properties": {
             "status": status, "vehicle": vehicle, "vehicle_label": v["label"],
             "limits": {"depth_m": v["depth_m"], "dv_m2s": v["dv_m2s"], "basis": v["basis"]},
+            "applied_limits": decision_limits(vehicle),
             "snap_m": [round(da), round(db)], "storm": {"intensity_mmhr": i, "duration_hr": dh},
             "direct": d_stats, "notes": notes, "advisory": advisory,
-            "assumptions": "Bridges and tunnels, and their approaches within about 60 m, are treated as above "
-                           f"the water. Flooded but passable roads cost {CAUTION_TIME_FACTOR:g}x their normal "
-                           "travel time. Speeds are free-flow estimates (traffic is not modelled).",
+            "assumptions": "Routes prefer main roads: the router uses a typical speed for each road type and counts "
+                           f"flooded but passable roads as {CAUTION_TIME_FACTOR:g}x slower. Traffic is not modelled, so "
+                           "travel times are not shown. Bridges and tunnels, and their approaches within about 60 m, "
+                           "are treated as above the water.",
         },
     }

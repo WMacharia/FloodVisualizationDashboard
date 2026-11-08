@@ -2,31 +2,24 @@
 
 namespace Database\Seeders;
 
-use App\Models\User;
 use Illuminate\Database\Seeder;
-use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Artisan;
 use RuntimeException;
 
+// Administrators sign in with Google, so no password is stored. This seeder marks every
+// address in ADMIN_EMAILS (.env) as an administrator; the same can be done one account at
+// a time with `php artisan admin:grant you@example.com`.
 class AdminSeeder extends Seeder
 {
     public function run(): void
     {
-        // Credentials come from .env so no password is stored in the code
-        $email = env('ADMIN_EMAIL');
-        $password = env('ADMIN_PASSWORD');
-        if (!$email || !$password || strlen($password) < 12) {
-            throw new RuntimeException('Set ADMIN_EMAIL and ADMIN_PASSWORD (at least 12 characters) in .env before seeding.');
+        $emails = config('auth.admin_emails');
+        if (!$emails) {
+            throw new RuntimeException('Set ADMIN_EMAILS (comma-separated Google accounts) in .env before seeding.');
         }
-
-        User::updateOrCreate(
-            ['email' => $email],
-            [
-                'name' => 'System Admin',
-                'role' => 'admin',
-                'password' => Hash::make($password),
-                'google_id' => null,
-                'avatar' => null
-            ]
-        );
+        foreach ($emails as $email) {
+            Artisan::call('admin:grant', ['email' => $email]);
+            $this->command?->line(trim(Artisan::output()));
+        }
     }
 }

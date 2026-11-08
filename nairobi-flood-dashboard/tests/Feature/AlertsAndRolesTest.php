@@ -147,6 +147,7 @@ class AlertsAndRolesTest extends TestCase
         $this->fakeServices();
         $admin = $this->user('admin');
         $resident = $this->user('user');
+        $this->withSession([\App\Http\Middleware\RequireRecentSignIn::KEY => time()]);   // signed in with Google just now
 
         $this->actingAs($admin)->patch("/admin/users/{$resident->id}/role", ['role' => 'responder'])->assertRedirect();
         $this->assertSame('responder', $resident->fresh()->role);
@@ -163,7 +164,7 @@ class AlertsAndRolesTest extends TestCase
     public function test_non_admins_cannot_open_the_console(): void
     {
         $this->fakeServices();
-        $this->actingAs($this->user('responder'))->get('/admin/dashboard')->assertRedirect(route('admin.login'));
+        $this->actingAs($this->user('responder'))->get('/admin/dashboard')->assertRedirect('/')->assertSessionHas('error');
         $this->actingAs($this->user('admin'))->get('/admin/dashboard')->assertOk()->assertSee('System health');
     }
 }

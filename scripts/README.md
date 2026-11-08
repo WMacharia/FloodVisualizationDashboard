@@ -4,7 +4,7 @@ This directory contains the machine learning pipeline and backend development sc
 
 ## Language and Stack
 - **Language**: Python 3.x
-- **Key Libraries**: Listed in the root `requirements.txt` file (typically includes `pandas`, `scikit-learn`, `xgboost`, `geopandas`, etc.).
+- **Key Libraries**: Listed in the root `requirements.txt` (PyTorch, FastAPI, NumPy/SciPy, Numba, rasterio, GeoPandas, pysheds).
 
 ## Virtual Environment (venv) Setup and Access
 A virtual environment named `nairobi_flood_env` is located in this folder to manage dependencies and isolate the project environment.
@@ -34,45 +34,36 @@ pip install -r ../requirements.txt
 
 ## Directory Structure
 - `data/`: Used for storing raw and processed datasets locally.
-- `models/`: Stores the trained and serialized machine learning models (e.g., `.pkl` or `.joblib` files) for later use in inference.
+- `models/`: The trained U-Net (`unet_surrogate.pth`) and its config; earlier models are kept for comparison.
 - `outputs/`: Contains generated outputs such as plots, evaluation metrics, logs, and predictions.
 - `cache/`: Used for caching intermediate processing steps or downloaded files to speed up reruns.
 - `nairobi_flood_env/`: The Python virtual environment.
 
-## Script Workflow & Contents
+## Pipeline
 
-The scripts follow a numerical prefix convention to indicate the order of execution for the machine learning pipeline:
+An Attention U-Net is trained to reproduce a physics-based flood simulator (a surrogate), so the dashboard
+can map any storm in under a second. Scripts run in numerical order; the first project approach
+(FastFlood / synthetic labels, Random Forest, XGBoost) is in `archive/legacy_pipeline/` and is not used.
 
-### 1. Data Collection & Setup
-- `01_download_data.py`: Main script for downloading required datasets (e.g., weather, elevation, historical flood data).
-- `01b_download_chirps.py`: Downloads specific CHIRPS precipitation data.
-- `01c_verify_env.py`: A quick utility to verify that the environment, dependencies, and paths are correctly configured.
-- `01d_download_missing.py`: Fetches any remaining or missing data that failed in initial downloads.
-
-### 2. Data Processing & Engineering
-- `02_preprocess.py`: Cleans raw data, handles missing values, and normalizes formats.
-- `03_feature_engineering.py`: Creates new predictive features (e.g., rolling averages for rainfall, slope calculation from elevation) to improve model accuracy.
-- `04_eda.py`: Exploratory Data Analysis (EDA) script used to generate insights, statistical summaries, and visual plots of the dataset.
-
-### 3. Model Preparation
-- `05_spatial_split.py`: Splits the data into training and testing sets, ensuring spatial considerations are respected (e.g., to prevent data leakage across adjacent regions).
-- `05b_check_feature_drift.py`: Checks for data drift between historical training data and newer validation data.
-
-### 4. Model Training
-- `06_train_model.py`: General training script, potentially used for baseline models or ensemble training.
-- `06b_train_xgboost.py`: Trains an XGBoost specific model for flood prediction.
-- `06c_train_single_models.py`: Trains standalone individual models for comparison.
-
-### 5. Model Evaluation
-- `07_evaluate_model.py`: General evaluation script to calculate metrics like Accuracy, Precision, Recall, and F1-Score.
-- `07b_evaluate_xgboost.py`: Evaluates the performance of the XGBoost model specifically.
-- `07c_evaluate_single_models.py`: Evaluates the baseline individual models to compare against the ensemble or primary models.
+| Step | Script | Output |
+|---|---|---|
+| Inputs | `01_data_aquisition.py` (Earth Engine) or `01d_download_missing.py` | raw DEM and land cover in `data/raw/` |
+| | `01_download_data.py` | Microsoft building footprints, OSM drainage (`data/interim/`) |
+| Grid | `02_align_master_grid.py` | 30 m master grid `data/aligned/aligned_dem.tif`, `aligned_esa.tif` |
+| | `08a_download_fabdem.py` | bare-earth terrain on the grid (`aligned_fabdem.tif`) |
+| | `08c_building_fraction.py` | building cover per cell (`aligned_building_frac.tif`) |
+| Simulator | `08_simulate_flood_scenarios.py` | max depth and depth x velocity for 28 design storms (`data/scenarios/`) |
+| Checks | `08b_validate_hotspots.py` | simulator vs reported April-May 2024 flood hotspots |
+| | `08d_verify_analytical.py` | simulator code vs the analytical flat-plane flood wave |
+| Dataset | `09_build_surrogate_dataset.py` | `data/surrogate/nairobi_surrogate_dataset.npz` (upload to Google Drive) |
+| Training | `../Flood_Surrogate_Training.ipynb` (Colab, T4 GPU) | `models/unet_surrogate.pth` + `unet_surrogate_config.json` |
+| Dashboard data | `10_build_dashboard_layers.py` | road graph, sub-counties, facilities (`data/dashboard/`) |
+| Routing margins | `11_calibrate_vehicle_margins.py` | per-vehicle safety margins (`data/validation/vehicle_margins.json`) |
+| Server | `model_api.py` | FastAPI on port 8001, called only by the Laravel app |
 
 ## Usage
-To run the full pipeline, activate the virtual environment and execute the scripts in numerical order:
 ```cmd
-python 01_download_data.py
-python 02_preprocess.py
-python 03_feature_engineering.py
-...
+nairobi_flood_env\Scripts\activate
+uvicorn model_api:app --host 127.0.0.1 --port 8001
 ```
+Re-run `11_calibrate_vehicle_margins.py` after replacing the model; the server ignores margins fitted for a different model.

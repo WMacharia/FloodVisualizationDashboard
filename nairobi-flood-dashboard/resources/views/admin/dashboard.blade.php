@@ -96,6 +96,10 @@
         .flash { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 20px; padding: 12px 16px; border-radius: 12px; font-weight: 700; border: 2px solid; }
         .flash.ok { background: var(--safe-soft); color: var(--safe); border-color: var(--safe); }
         .flash.err { background: var(--high-soft); color: var(--high); border-color: var(--high); }
+        .flash-btn { margin-left: auto; flex: none; text-decoration: none; }
+        .secbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 16px; margin-bottom: 20px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); font-size: 14.5px; }
+        .secbar > span:first-child { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .secbar a { color: var(--accent); font-weight: 700; }
 
         /* Health cards */
         .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
@@ -178,7 +182,7 @@
             <button type="button" class="btn icon-btn" id="theme-btn" onclick="toggleTheme()" aria-label="Switch to dark theme">
                 <svg class="i" id="theme-icon"><use href="#i-moon"/></svg>
             </button>
-            <form action="{{ route('admin.logout') }}" method="POST" style="margin:0;">
+            <form action="{{ route('logout') }}" method="POST" style="margin:0;">
                 @csrf
                 <button type="submit" class="btn"><svg class="i" aria-hidden="true"><use href="#i-logout"/></svg> Sign out</button>
             </form>
@@ -197,14 +201,33 @@
             <div class="flash ok" role="status"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span>{{ session('status') }}</span></div>
         @endif
         @if (session('error'))
-            <div class="flash err" role="alert"><svg class="i" aria-hidden="true"><use href="#i-alert"/></svg><span>{{ session('error') }}</span></div>
+            <div class="flash err" role="alert"><svg class="i" aria-hidden="true"><use href="#i-alert"/></svg><span>{{ session('error') }}</span>
+                @if (session('reconfirm_needed'))
+                    <a class="btn btn-sm flash-btn" href="{{ route('auth.reconfirm', ['return' => '/admin/dashboard#users']) }}">Confirm with Google</a>
+                @endif
+            </div>
         @endif
+
+        @php $confirmedUntil = \App\Http\Middleware\RequireRecentSignIn::confirmedUntil(request()); @endphp
+        <div class="secbar" role="note" aria-label="Session security">
+            <span><svg class="i" aria-hidden="true"><use href="#i-lock"/></svg>
+                @if ($confirmedUntil)
+                    You can change roles and delete accounts until <b>{{ \Illuminate\Support\Carbon::createFromTimestamp($confirmedUntil)->timezone('Africa/Nairobi')->format('H:i') }}</b>
+                    <span class="muted">({{ config('auth.reconfirm_minutes') }} minutes after your last Google sign-in)</span>
+                @else
+                    Changing roles and deleting accounts is locked. <a href="{{ route('auth.reconfirm', ['return' => '/admin/dashboard#users']) }}">Confirm it's you with Google</a> to unlock it for {{ config('auth.reconfirm_minutes') }} minutes.
+                @endif
+            </span>
+            <span class="muted">Signed in with Google · signs out after {{ config('auth.staff_idle_minutes') }} min idle</span>
+        </div>
 
         @php
             $m = $health['model'] ?? [];
             $mm = $m['model'] ?? [];
             $rq = $health['requests'];
             $wx = $health['weather'];
+            // Under a second in milliseconds ("40 ms"), otherwise seconds ("1.3 s"); same as secs() in the script
+            $dur = fn ($ms) => $ms === null ? '—' : ($ms < 1000 ? $ms . ' ms' : number_format($ms / 1000, 1) . ' s');
         @endphp
 
         <!-- SYSTEM HEALTH -->
@@ -235,10 +258,10 @@
                 </div>
                 <div class="card">
                     <h3>Map requests</h3>
-                    <div class="big" id="h-median">{{ $rq['median_ms'] !== null ? number_format($rq['median_ms'] / 1000, 1) . ' s' : '—' }}</div>
+                    <div class="big" id="h-median">{{ $dur($rq['median_ms']) }}</div>
                     <div class="muted">median response, last <span id="h-count">{{ $rq['count'] }}</span></div>
                     <div class="kv">
-                        <span>95th percentile</span><b id="h-p95">{{ $rq['p95_ms'] !== null ? number_format($rq['p95_ms'] / 1000, 1) . ' s' : '—' }}</b>
+                        <span>95th percentile</span><b id="h-p95">{{ $dur($rq['p95_ms']) }}</b>
                         <span>Failed</span><b id="h-fail">{{ $rq['failures'] }}</b>
                     </div>
                 </div>
@@ -411,12 +434,13 @@
 
         const CSRF = document.querySelector('meta[name="csrf-token"]').content;
         function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
-        function secs(ms) { return ms == null ? '—' : (ms / 1000).toFixed(1) + ' s'; }
+        function secs(ms) { return ms == null ? '—' : ms < 1000 ? Math.round(ms) + ' ms' : (ms / 1000).toFixed(1) + ' s'; }
         function set(id, text) { document.getElementById(id).textContent = text; }
 
         async function refreshHealth() {
             try {
                 const res = await fetch('{{ route('admin.health') }}', { headers: { Accept: 'application/json' } });
+                if (signedOut(res)) return;
                 if (!res.ok) return;
                 const h = await res.json(), m = h.model || {}, mm = m.model || {}, r = h.requests || {}, w = h.weather;
                 document.getElementById('h-dot').className = 'dot ' + (m.online ? 'ok' : 'bad');
@@ -438,6 +462,7 @@
             let data;
             try {
                 const res = await fetch('/api/alerts', { headers: { Accept: 'application/json' } });
+                if (signedOut(res)) return;
                 data = await res.json();
             } catch (e) { box.innerHTML = '<div class="empty">Could not load alerts.</div>'; return; }
             const list = (data.alerts || []).filter(a => a.audience !== 'user')
@@ -459,6 +484,21 @@
             await fetch(`/api/alerts/${id}/ack`, { method: 'POST', headers: { Accept: 'application/json', 'X-CSRF-TOKEN': CSRF } });
             loadAlerts();
         }
+
+        // Signed out (idle timeout or elsewhere): go to the sign-in page, which explains why
+        function signedOut(res) {
+            if (res.status !== 401 && res.status !== 403 && !res.redirected) return false;
+            location.href = '/';   // the map explains why (e.g. signed out after 30 min idle)
+            return true;
+        }
+        // Real use (clicks, typing, scrolling) keeps the session alive; background polling does not
+        let lastPing = Date.now();
+        ['pointerdown', 'keydown', 'wheel', 'scroll'].forEach(ev => addEventListener(ev, () => {
+            if (Date.now() - lastPing < 4 * 60 * 1000) return;
+            lastPing = Date.now();
+            fetch('/auth/activity', { method: 'POST', headers: { Accept: 'application/json', 'X-CSRF-TOKEN': CSRF } })
+                .then(signedOut).catch(() => {});
+        }, { passive: true }));
 
         loadAlerts();
         setInterval(() => { refreshHealth(); loadAlerts(); }, 30000);

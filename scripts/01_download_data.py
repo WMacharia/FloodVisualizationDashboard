@@ -1,3 +1,10 @@
+"""
+PHASE 1: DOWNLOAD VECTOR DATA FOR NAIROBI
+
+Microsoft building footprints (-> data/interim/nairobi_buildings.gpkg, used by 08c) and the OSM drainage
+network. The FastFlood target raster this script used to build is no longer used: the U-Net now learns
+from our own simulator (08). The original script is in archive/legacy_pipeline/.
+"""
 import os
 import sys
 
@@ -7,16 +14,11 @@ os.environ.pop("PROJ_LIB", None)
 os.environ.pop("GDAL_DATA", None)
 # ------------------------------------------------------------
 
-import shutil
 import zipfile
 import requests
 import geopandas as gpd
 import osmnx as ox
-import rasterio
-from rasterio.mask import mask
 from shapely.geometry import box
-import numpy as np
-from rasterio.transform import from_bounds
 
 # Create directories
 os.makedirs("data/raw", exist_ok=True)
@@ -39,157 +41,7 @@ def download_file(url: str, dest_path: str):
     print(f"Saved: {dest_path} ({os.path.getsize(dest_path) / (1024*1024):.2f} MB)")
 
 
-# 1. Target Data: FASTFLOOD Nairobi (CSV → Raster)
-TARGET_CSV = "data/raw/flood_hazard_nairobi.csv"
-TARGET_RASTER = "data/raw/fastflood_depth.tif"
-
-if not os.path.exists(TARGET_RASTER):
-    # Download CSV if missing
-    if not os.path.exists(TARGET_CSV):
-        print("Downloading FloodHazard_Nairobi.csv from Zenodo...")
-        try:
-            response = requests.get(
-                "https://zenodo.org/records/18659986/files/FloodHazard_Nairobi.csv",
-                stream=True,
-                timeout=120
-            )
-            response.raise_for_status()
-            with open(TARGET_CSV, "wb") as f:
-                for chunk in response.iter_content(chunk_size=1024*1024):
-                    f.write(chunk)
-            print(f"✅ Saved: {TARGET_CSV}")
-        except Exception as e:
-            print(f"❌ CSV download failed: {e}")
-            print("   Generating synthetic fallback target...")
-            # Create synthetic fallback
-            from rasterio.transform import from_bounds
-            transform = from_bounds(*NAIROBI_BBOX, 1500, 1000)
-            profile = {
-                'driver': 'GTiff', 'height': 1000, 'width': 1500, 'count': 1,
-                'dtype': 'float32', 'crs': 'EPSG:4326', 'transform': transform, 'nodata': -9999.0
-            }
-            with rasterio.open(TARGET_RASTER, 'w', **profile) as dst:
-                synth_depth = np.random.exponential(scale=0.2, size=(1000, 1500)).astype('float32')
-                synth_depth[synth_depth < 0.05] = 0.0
-                dst.write(synth_depth, 1)
-            print(f"✅ Synthetic fallback target saved: {TARGET_RASTER}")
-            # Skip the rest of this block
-            # Use a flag to avoid double creation
-            skip_conversion = True
-        else:
-            skip_conversion = False
-    else:
-        skip_conversion = False
-
-    # Convert CSV to raster only if we successfully downloaded the CSV
-    if not skip_conversion and os.path.exists(TARGET_CSV):
-        print("Converting CSV to raster grid...")
-        try:
-            import pandas as pd
-            import numpy as np
-            from rasterio.transform import from_origin
-            import rasterio
-
-            df = pd.read_csv(TARGET_CSV)
-            print(f"   Loaded {len(df)} records from CSV")
-
-            # Inspect column names (adapt if needed)
-            # Expect 'lat', 'lon', 'flood_hazard'
-            # If columns differ, adjust below
-            lat_col = 'lat' if 'lat' in df.columns else 'latitude'
-            lon_col = 'lon' if 'lon' in df.columns else 'longitude'
-            hazard_col = 'flood_hazard' if 'flood_hazard' in df.columns else df.columns[2]  # fallback
-
-            print(f"   Using columns: lat={lat_col}, lon={lon_col}, hazard={hazard_col}")
-
-            # Get unique coordinates
-            lats = np.sort(df[lat_col].unique())
-            lons = np.sort(df[lon_col].unique())
-
-            # Create grid
-            grid = np.full((len(lats), len(lons)), np.nan, dtype=np.float32)
-
-            # Build index maps
-            lat_to_idx = {lat: i for i, lat in enumerate(lats)}
-            lon_to_idx = {lon: j for j, lon in enumerate(lons)}
-
-            # Mapping hazard categories to flood depth (in meters)
-            # FASTFLOOD hazard values are likely integers 1-5
-            # You should verify this by printing the unique values
-            unique_hazards = df[hazard_col].unique()
-            print(f"   Unique hazard values: {sorted(unique_hazards)}")
-            # Adjust depth mapping based on actual categories
-            # If values are not 1-5, adapt the mapping
-            depth_map = {
-                1: 0.1,
-                2: 0.3,
-                3: 0.7,
-                4: 1.2,
-                5: 2.0
-            }
-            # If you see different values, adjust accordingly
-            # For example, if hazard is 0,1,2,3,4 maybe map 0->0,1->0.1,2->0.5,3->1.0,4->2.0
-
-            # Fill grid
-            for _, row in df.iterrows():
-                try:
-                    i = lat_to_idx[row[lat_col]]
-                    j = lon_to_idx[row[lon_col]]
-                    hazard = row[hazard_col]
-                    # If hazard is not in map, assign 0
-                    grid[i, j] = depth_map.get(hazard, 0.0)
-                except KeyError:
-                    # Skip if coordinates not found (shouldn't happen)
-                    continue
-
-            # Handle missing values
-            grid = np.nan_to_num(grid, nan=0.0)
-            grid = np.clip(grid, 0.0, 10.0).astype(np.float32)
-
-            # Calculate resolution
-            lat_res = abs(lats[1] - lats[0]) if len(lats) > 1 else 0.001
-            lon_res = abs(lons[1] - lons[0]) if len(lons) > 1 else 0.001
-
-            # Create GeoTIFF
-            transform = from_origin(lons.min(), lats.max(), lon_res, lat_res)
-            profile = {
-                'driver': 'GTiff',
-                'height': len(lats),
-                'width': len(lons),
-                'count': 1,
-                'dtype': 'float32',
-                'crs': 'EPSG:4326',
-                'transform': transform,
-                'nodata': -9999.0
-            }
-
-            with rasterio.open(TARGET_RASTER, 'w', **profile) as dst:
-                dst.write(grid, 1)
-
-            print(f"✅ Created raster: {TARGET_RASTER}")
-            print(f"   Grid size: {len(lats)} x {len(lons)}")
-            print(f"   Non-zero flood pixels: {np.count_nonzero(grid > 0.05):,}")
-
-        except Exception as e:
-            print(f"❌ CSV→raster conversion failed: {e}")
-            print("   Generating synthetic fallback target instead...")
-            # Fallback to synthetic
-            from rasterio.transform import from_bounds
-            transform = from_bounds(*NAIROBI_BBOX, 1500, 1000)
-            profile = {
-                'driver': 'GTiff', 'height': 1000, 'width': 1500, 'count': 1,
-                'dtype': 'float32', 'crs': 'EPSG:4326', 'transform': transform, 'nodata': -9999.0
-            }
-            with rasterio.open(TARGET_RASTER, 'w', **profile) as dst:
-                synth_depth = np.random.exponential(scale=0.2, size=(1000, 1500)).astype('float32')
-                synth_depth[synth_depth < 0.05] = 0.0
-                dst.write(synth_depth, 1)
-            print(f"✅ Synthetic fallback target saved: {TARGET_RASTER}")
-
-else:
-    print(f"Target raster already exists: {TARGET_RASTER}")
-
-# 2. Microsoft Building Footprints
+# 1. Microsoft Building Footprints (used by 08c_building_fraction.py)
 MS_BUILDINGS_URL = "https://minedbuildings.z5.web.core.windows.net/legacy/africa/kenya.geojsonl.zip"
 MS_ZIP_PATH = "data/raw/kenya_buildings.zip"
 MS_EXTRACT_PATH = "data/raw/kenya.geojsonl"
@@ -256,7 +108,7 @@ with open(MS_EXTRACT_PATH, 'r') as f:
     buildings_gdf.to_file(BUILDINGS_CLIPPED, driver="GPKG")
     print(f"Saved {len(buildings_gdf)} clipped buildings to {BUILDINGS_CLIPPED}")
 
-# 3. Drainage Network - Reliable Fallback via Geofabrik
+# 2. Drainage Network - Reliable Fallback via Geofabrik
 DRAINAGE_PATH = "data/interim/nairobi_drainage.gpkg"
 if not os.path.exists(DRAINAGE_PATH):
     print("Downloading Kenya waterways from Geofabrik (static file, no API timeout)...")

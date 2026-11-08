@@ -21,6 +21,7 @@
     <!-- Atkinson Hyperlegible: designed by the Braille Institute for maximum character legibility -->
     <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" />
 
     <style>
         /* =========================================================
@@ -80,8 +81,8 @@
         }
         :root {
             --top: 60px;
-            --rail: 76px;
-            --panel-w: 380px;
+            --rail: 72px;
+            --panel-w: 360px;
             --radius: 12px;
             --ease: cubic-bezier(.2, .8, .2, 1);
             /* Depth ramp, identical to model_api.py RAMP_RGB: 0.15 / 0.3 / 0.6 / 1.2 / 2 m */
@@ -253,7 +254,7 @@
         .seg button { border: 0; background: transparent; border-radius: 7px; min-height: 32px; font-weight: 700; font-size: 13px; cursor: pointer; color: var(--text-3); }
         .seg button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.15); }
 
-        .legend { left: 12px; bottom: 26px; width: 280px; padding: 12px 14px; font-size: 13px; }
+        .legend { left: 12px; bottom: 26px; width: 320px; padding: 12px 14px; font-size: 13px; }
         .legend summary { font-weight: 700; cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; }
         .legend summary::-webkit-details-marker { display: none; }
         .legend summary::after { content: '▾'; color: var(--text-3); }
@@ -261,12 +262,16 @@
         .legend[open] summary { margin-bottom: 8px; }
         .lg-row { display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; align-items: center; padding: 2px 0; color: var(--text-2); }
         .sw { width: 22px; height: 14px; border-radius: 3px; border: 1px solid rgba(0,0,0,.15); }
-        .lg-row em { font-style: normal; color: var(--text-3); font-size: 12px; }
+        .lg-row em { font-style: normal; color: var(--text-3); font-size: 12px; text-align: right; }
+        .lg-row > span:nth-child(2) { white-space: nowrap; }   /* "Moderate · 30–60 cm" stays on one line */
         .ramp { height: 12px; border-radius: 3px; background: var(--ramp); border: 1px solid rgba(0,0,0,.15); }
         .ramp-labels { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--text-3); margin-top: 3px; }
         .lg-note { font-size: 12px; color: var(--text-3); margin: 8px 0 0; line-height: 1.35; }
         .ln { width: 22px; height: 0; border-top: 5px solid #16a34a; border-radius: 3px; }
         .ln.direct { border-top: 4px dashed #8b5cf6; }
+        .ln.alt { border-top: 5px solid #64748b; }
+        .alt-card { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 10px; padding: 8px 10px; border: 1px dashed var(--line-strong); border-radius: 9px; font-size: 13px; }
+        .alt-card .link { flex: none; }
         .ln.hazard { border-top: 6px solid #dc2626; }
 
         .map-hint {
@@ -497,11 +502,56 @@
         /* =========================================================
            SMALL SCREENS: bottom navigation + bottom sheet
         ========================================================= */
+        /* Laptop screens: a narrower, denser side panel so the map keeps most of the width */
+        @media (max-width: 1680px) {
+            :root { --rail: 68px; --panel-w: 320px; }
+            .rail { padding: 8px 6px; }
+            .rail-btn { min-height: 56px; font-size: 11px; }
+            .rail-btn .i { width: 20px; height: 20px; }
+            .rail-btn[aria-selected="true"]::before { left: -6px; }
+            .panel-head { padding: 12px 10px 8px 14px; }
+            .panel-head h1 { font-size: 16px; }
+            .panel-head .sub { font-size: 12px; }
+            .panel-body { padding: 12px 12px 16px; }
+            .sec { margin-top: 14px; }
+            .scenario-card { padding: 10px 12px; gap: 10px; }
+            .scenario-card b { font-size: 14px; }
+            .scenario-card span { font-size: 12px; }
+            .scenario-card .i { width: 22px; height: 22px; }
+            .kpis { gap: 6px; }
+            .kpi { padding: 9px 10px; }
+            .kpi-label { font-size: 11.5px; }
+            .kpi-value { font-size: 20px; }
+            .kpi-value small { font-size: 12px; }
+            .kpi-sub { font-size: 11.5px; }
+            .stack-legend { font-size: 12px; }
+            .row { padding: 7px 10px; min-height: 46px; }
+            .row-name { font-size: 13.5px; }
+            .metric, .stat { padding: 7px 8px; }
+            .metric b, .stat b { font-size: 14px; white-space: nowrap; }
+            .metric span, .stat span { font-size: 11px; line-height: 1.25; display: block; }
+        }
+        /* The top bar compacts step by step instead of letting the presets run over the weather box */
+        @media (max-width: 1700px) {
+            .brand-text span, .sc-label, .weather small { display: none; }
+        }
         @media (max-width: 1520px) {
             .acct-name, .acct-role { display: none; }
         }
-        @media (max-width: 1180px) {
-            .weather .wx-text, .sc-label { display: none; }
+        @media (max-width: 1500px) {
+            .presets .preset:not(.custom-btn) small { display: none; }   /* rates stay in each preset's tooltip */
+        }
+        @media (max-width: 1280px) {
+            .weather .wx-text { display: none; }
+        }
+        @media (max-width: 1100px) {
+            .brand-text, .divider { display: none; }
+            .topbar { gap: 10px; }
+            .preset { padding: 5px 8px; }
+        }
+        @media (max-width: 980px) {
+            .weather > .i { display: none; }
+            .weather { padding: 4px; }
         }
         @media (max-width: 980px) {
             .brand-text span, .acct-name, .acct-role { display: none; }
@@ -578,10 +628,10 @@
             <div class="scenario" role="group" aria-label="Storm scenario">
                 <span class="sc-label">Scenario</span>
                 <div class="presets" id="presets">
-                    <button class="preset" data-i="20" data-d="2" aria-pressed="false"><b>Heavy</b><small>20 mm/h · 2 h</small></button>
-                    <button class="preset" data-i="35" data-d="2" aria-pressed="false"><b>Intense</b><small>35 mm/h · 2 h</small></button>
-                    <button class="preset" data-i="50" data-d="3" aria-pressed="false"><b>Violent</b><small>50 mm/h · 3 h</small></button>
-                    <button class="preset" data-i="90" data-d="3" aria-pressed="false"><b>Extreme</b><small>90 mm/h · 3 h</small></button>
+                    <button class="preset" data-i="20" data-d="2" aria-pressed="false" title="Heavy: 20 mm/h for 2 h"><b>Heavy</b><small>20 mm/h · 2 h</small></button>
+                    <button class="preset" data-i="35" data-d="2" aria-pressed="false" title="Intense: 35 mm/h for 2 h"><b>Intense</b><small>35 mm/h · 2 h</small></button>
+                    <button class="preset" data-i="50" data-d="3" aria-pressed="false" title="Violent: 50 mm/h for 3 h"><b>Violent</b><small>50 mm/h · 3 h</small></button>
+                    <button class="preset" data-i="90" data-d="3" aria-pressed="false" title="Extreme: 90 mm/h for 3 h"><b>Extreme</b><small>90 mm/h · 3 h</small></button>
                     <button class="preset custom-btn" id="custom-btn" aria-pressed="false" aria-expanded="false" aria-controls="custom-pop">
                         <b>Custom</b><small id="sc-summary">30 mm/h · 2 h</small>
                     </button>
@@ -870,7 +920,7 @@
                 <section>
                     <h3>Flood display</h3>
                     <label class="opt"><input type="radio" name="display" value="auto" checked><span><b>Automatic</b><small>Hazard zones when zoomed out, flood outlines when zoomed in</small></span></label>
-                    <label class="opt"><input type="radio" name="display" value="zones"><span><b>Hazard zones</b><small>10-hectare hexagons coloured by depth</small></span></label>
+                    <label class="opt"><input type="radio" name="display" value="zones"><span><b>Hazard zones</b><small>Hexagons about 350 m across, coloured by depth</small></span></label>
                     <label class="opt"><input type="radio" name="display" value="extent"><span><b>Flood outlines</b><small>Predicted water area, banded by depth</small></span></label>
                     <label class="opt"><input type="radio" name="display" value="cells"><span><b>30 m model cells</b><small>Raw model output, shaded by certainty</small></span></label>
                     <div class="control" style="margin-top:8px">
@@ -898,6 +948,7 @@
                 <div id="legend-body"></div>
                 <div id="legend-route" hidden>
                     <div class="lg-row" style="margin-top:6px"><span class="ln"></span><span>Safe route</span><em></em></div>
+                    <div class="lg-row" id="legend-alt" hidden><span class="ln alt"></span><span>Similar alternative (click to use)</span><em></em></div>
                     <div class="lg-row"><span class="ln direct"></span><span>Direct route</span><em></em></div>
                     <div class="lg-row"><span class="ln hazard"></span><span>Unsafe for your vehicle</span><em></em></div>
                 </div>
@@ -910,6 +961,9 @@
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Vector base map: MapLibre GL draws it, the plugin keeps it in step with Leaflet (which still owns every other layer) -->
+    <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+    <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.1.4/leaflet-maplibre-gl.js"></script>
     <script>
         // =========================================================
         // CONFIG
@@ -918,14 +972,17 @@
         const VEHICLE_ICON = { boda_boda: 'i-moto', saloon: 'i-car', large_car: 'i-van', suv_4x4: 'i-suv', lorry_bus: 'i-truck' };
         const VEHICLE_SHORT = { boda_boda: 'Boda boda', saloon: 'Saloon', large_car: 'Matatu', suv_4x4: 'SUV / 4x4', lorry_bus: 'Lorry / bus' };
         const VERDICT = { safe: 'Passable', caution: 'Slow – shallow water', unsafe: 'Unsafe' };
-        // Hazard levels (model_api.py ZONE_LEVELS): deepest water covering at least 10% of a zone
+        // Hazard levels (model_api.py ZONE_LEVELS): deepest water covering at least 10% of a zone.
+        // Named to match their colours, from blue (low) to red (severe).
         const LEVELS = [
-            { key: 'moderate',  label: 'Moderate',  depth: '15–30 cm', meaning: 'can knock an adult over', color: '#9ecae1' },
-            { key: 'high',      label: 'High',      depth: '30–60 cm', meaning: 'can float many cars',     color: '#ffed6f' },
-            { key: 'very_high', label: 'Very high', depth: '0.6–1.2 m', meaning: 'sweeps away most vehicles', color: '#fd8d3c' },
-            { key: 'severe',    label: 'Severe',    depth: '> 1.2 m',  meaning: 'impassable',              color: '#d7191c' },
+            { key: 'low',      label: 'Low',      depth: '15–30 cm', meaning: 'can knock an adult over', color: '#9ecae1' },
+            { key: 'moderate', label: 'Moderate', depth: '30–60 cm', meaning: 'can float many cars',     color: '#ffed6f' },
+            { key: 'high',     label: 'High',     depth: '0.6–1.2 m', meaning: 'sweeps away most vehicles', color: '#fd8d3c' },
+            { key: 'severe',   label: 'Severe',   depth: '> 1.2 m',  meaning: 'impassable',              color: '#d7191c' },
         ];
         const LEVEL = Object.fromEntries(LEVELS.map(l => [l.key, l]));
+        // Hazard zones are hexagons ~350 m across (model_api.py ZONE_RADIUS_M = 200 m, centre to corner)
+        const ZONE_SIZE = 'about 350 m across';
         const BAND_COLORS = ['#9ecae1', '#ffed6f', '#fd8d3c', '#d7191c'];
         const AUTO_EXTENT_ZOOM = 14;
         const MODULE_INFO = {
@@ -944,32 +1001,107 @@
         // =========================================================
         // MAP
         // =========================================================
-        const map = L.map('map', { zoomControl: false, preferCanvas: false }).setView([-1.2880, 36.8320], 12);
+        // Zoom 19 is about 20 m on the scale bar; the flood data itself is 30 m, so there is nothing finer to show
+        const MAP_MAX_ZOOM = 19;
+        const map = L.map('map', { zoomControl: false, preferCanvas: false, maxZoom: MAP_MAX_ZOOM }).setView([-1.2880, 36.8320], 12);
         L.control.zoom({ position: 'bottomright' }).addTo(map);
         L.control.scale({ position: 'bottomright', imperial: false }).addTo(map);
-        [['flood', 410], ['bounds', 420], ['routes', 450], ['labels', 650]].forEach(([name, z]) => {
+        // Place names sit above the flooding and routes but below markers (600), tooltips (650) and popups (700),
+        // so they never show through an open tooltip
+        [['flood', 410], ['bounds', 420], ['routes', 450], ['labels', 480]].forEach(([name, z]) => {
             map.createPane(name);
             map.getPane(name).style.zIndex = z;
         });
         map.getPane('labels').style.pointerEvents = 'none';
         map.getPane('bounds').style.pointerEvents = 'none';
-        const floodRenderer = L.canvas({ pane: 'flood', padding: 0.5 });
+        // padding 0.1 (Leaflet's default): the canvas extends 10% past each edge of the view; 0.5 painted 4x the
+        // visible area on every redraw and made quick zooms stall
+        const floodRenderer = L.canvas({ pane: 'flood', padding: 0.1 });
 
-        let baseLayer = null, labelLayer = null, baseKind = 'streets';
-        function setBasemap() {
+        // ---------- Base map ----------
+        // Vector map from OpenFreeMap (OpenStreetMap data; free, no key) drawn by MapLibre GL: sharp at every zoom,
+        // with no missing tiles. The style is split in two so place names stay readable over the flooding: the map
+        // without labels goes under the flood layer, the labels alone go above it. If WebGL or the style is not
+        // available, the CARTO raster tiles used before are shown instead.
+        const OFM_STYLE = { light: 'https://tiles.openfreemap.org/styles/positron', dark: 'https://tiles.openfreemap.org/styles/dark' };
+        const OFM_ATTRIBUTION = '<a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> &copy; '
+            + '<a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> Data from '
+            + '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>';
+        const ESRI_ATTRIBUTION = 'Imagery &copy; Esri, Maxar, Earthstar Geographics';
+        const styleCache = {};
+        let baseLayer = null, labelLayer = null, baseKind = 'streets', basemapSeq = 0;
+        let vectorOk = (() => {
+            try {
+                const c = document.createElement('canvas');
+                return !!(window.maplibregl && L.maplibreGL && (c.getContext('webgl2') || c.getContext('webgl')));
+            } catch (e) { return false; }
+        })();
+        function loadStyle(name) {
+            if (!styleCache[name]) styleCache[name] = fetch(OFM_STYLE[name]).then(r => {
+                if (!r.ok) throw new Error(`style ${name}: HTTP ${r.status}`);
+                return r.json();
+            });
+            return styleCache[name];
+        }
+        // part 'base': everything except text and icons; 'labels': only text and icons, on a transparent background.
+        // onImagery: white text with a dark outline, readable over satellite photos
+        function splitStyle(style, part, onImagery = false) {
+            const s = JSON.parse(JSON.stringify(style));
+            s.layers = s.layers.filter(l => (l.type === 'symbol') === (part === 'labels'));
+            if (onImagery) s.layers.forEach(l => {
+                if (!l.layout || !l.layout['text-field']) return;
+                l.paint = Object.assign({}, l.paint, { 'text-color': '#ffffff', 'text-halo-color': 'rgba(0, 0, 0, 0.85)', 'text-halo-width': 1.6 });
+            });
+            return s;
+        }
+        // The style names a few pattern images its sprite doesn't contain; give MapLibre a blank one instead of a warning
+        function fillMissingImages(layer) {
+            const gl = layer.getMaplibreMap && layer.getMaplibreMap();
+            if (gl) gl.on('styleimagemissing', e => {
+                if (!gl.hasImage(e.id)) gl.addImage(e.id, { width: 1, height: 1, data: new Uint8Array(4) });
+            });
+        }
+        function satelliteLayer() {
+            // Esri has imagery to zoom 19 here; maxNativeZoom keeps the last real tiles instead of a placeholder
+            return L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                { attribution: ESRI_ATTRIBUTION, maxNativeZoom: 19, maxZoom: MAP_MAX_ZOOM, keepBuffer: 4, updateWhenZooming: false });
+        }
+        function rasterBasemap(dark, satellite) {
+            // Fallback: CARTO raster tiles (this key serves up to zoom 18; Leaflet enlarges them beyond)
+            const opts = { attribution: '&copy; OpenStreetMap contributors, &copy; CARTO', subdomains: 'abcd',
+                           maxNativeZoom: 18, maxZoom: MAP_MAX_ZOOM, keepBuffer: 4, updateWhenZooming: false };
+            const base = satellite ? satelliteLayer()
+                : L.tileLayer(`https://{s}.basemaps.cartocdn.com/${dark ? 'dark' : 'light'}_nolabels/{z}/{x}/{y}{r}.png${TILE_KEY}`, opts);
+            const labels = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${dark || satellite ? 'dark' : 'light'}_only_labels/{z}/{x}/{y}{r}.png${TILE_KEY}`,
+                Object.assign({ pane: 'labels', className: dark || satellite ? 'bright-map-labels' : '' }, opts));
+            return [base, labels];
+        }
+        async function setBasemap() {
+            const seq = ++basemapSeq;   // theme or base switched again while a style was loading: the newest wins
+            const dark = currentTheme() === 'dark', satellite = baseKind === 'satellite';
+            let layers = null;
+            if (vectorOk) {
+                try {
+                    const style = await loadStyle(dark || satellite ? 'dark' : 'light');
+                    if (seq !== basemapSeq) return;
+                    const gl = (part, extra) => L.maplibreGL(Object.assign({ style: splitStyle(style, part, satellite), interactive: false }, extra));
+                    layers = [
+                        satellite ? satelliteLayer() : gl('base', { attributionControl: { customAttribution: OFM_ATTRIBUTION } }),
+                        gl('labels', { pane: 'labels', attributionControl: satellite ? { customAttribution: OFM_ATTRIBUTION } : false }),
+                    ];
+                } catch (e) {
+                    console.warn('Vector map unavailable, using raster tiles:', e.message);
+                    vectorOk = false;
+                }
+            }
+            if (seq !== basemapSeq) return;
+            if (!layers) layers = rasterBasemap(dark, satellite);
             if (baseLayer) map.removeLayer(baseLayer);
             if (labelLayer) map.removeLayer(labelLayer);
-            const dark = currentTheme() === 'dark';
-            const carto = { attribution: '&copy; OpenStreetMap contributors, &copy; CARTO', subdomains: 'abcd', maxZoom: 19 };
-            if (baseKind === 'satellite') {
-                baseLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-                    { attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics', maxZoom: 19 }).addTo(map);
-            } else {
-                baseLayer = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${dark ? 'dark' : 'light'}_nolabels/{z}/{x}/{y}@2x.png${TILE_KEY}`, carto).addTo(map);
-            }
-            const labelStyle = (dark || baseKind === 'satellite') ? 'dark' : 'light';
-            labelLayer = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${labelStyle}_only_labels/{z}/{x}/{y}@2x.png${TILE_KEY}`,
-                Object.assign({ pane: 'labels', className: dark || baseKind === 'satellite' ? 'bright-map-labels' : '' }, carto)).addTo(map);
+            [baseLayer, labelLayer] = layers;
+            baseLayer.addTo(map);
+            labelLayer.addTo(map);
+            [baseLayer, labelLayer].forEach(fillMissingImages);
         }
 
         // State
@@ -1002,9 +1134,16 @@
             try { body = await res.json(); } catch (e) {}
             if (!res.ok) {
                 const msg = (body && (body.error || body.message)) || `Request failed (HTTP ${res.status})`;
+                if (body && body.signed_out) staffSignedOut(msg);
                 throw new Error(msg);
             }
             return body;
+        }
+        // A staff session ended (30 min idle): reload as a guest so the page matches the account
+        function staffSignedOut(msg) {
+            if (!ME) return;
+            toast(msg, 'error', 8000);
+            setTimeout(() => location.reload(), 2500);
         }
         function currentStorm() {
             return {
@@ -1027,7 +1166,7 @@
             document.getElementById('theme-btn').setAttribute('aria-label', dark ? 'Switch to light theme' : 'Switch to dark theme');
             setBasemap();
             if (subcountyLayer) subcountyLayer.setStyle(subcountyStyle);
-            if (zonesLayer) zonesLayer.setStyle(zoneStyle);
+            restyleZones();
         }
         function toggleTheme() { applyTheme(currentTheme() === 'dark' ? 'light' : 'dark'); }
 
@@ -1208,22 +1347,29 @@
         // =========================================================
         // LIVE WEATHER
         // =========================================================
-        function rainLevel(mm) {
-            if (mm <= 0) return 'No rain now';
-            if (mm < 2.5) return 'Light rain now';
-            if (mm < 7.6) return 'Moderate rain now';
-            if (mm < 50) return 'Heavy rain now';
+        // Rain-rate classes in mm/h (American Meteorological Society)
+        function rainLevel(mmhr) {
+            if (mmhr <= 0) return 'No rain now';
+            if (mmhr < 2.5) return 'Light rain now';
+            if (mmhr < 7.6) return 'Moderate rain now';
+            if (mmhr < 50) return 'Heavy rain now';
             return 'Violent rain now';
         }
+        // Open-Meteo's "current" precipitation is the total over the last `interval` seconds (15 minutes),
+        // so it is converted to mm/h. The hourly forecast says how long the rain is expected to last.
+        let liveForecast = [];   // mm in each hour, starting with the current hour
         async function fetchLiveWeather() {
             try {
-                const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=-1.2921&longitude=36.8219&current=temperature_2m,relative_humidity_2m,precipitation,rain');
+                const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=-1.2921&longitude=36.8219'
+                    + '&current=temperature_2m,relative_humidity_2m,precipitation&hourly=precipitation&forecast_hours=6&timezone=Africa%2FNairobi');
                 const data = await res.json();
                 if (data.current) {
-                    currentLiveRain = data.current.precipitation || 0;
-                    document.getElementById('live-rain').innerText = `${currentLiveRain} mm`;
-                    document.getElementById('live-temp').innerText = `${data.current.temperature_2m} °C`;
-                    document.getElementById('live-hum').innerText = `${data.current.relative_humidity_2m} %`;
+                    const c = data.current;
+                    currentLiveRain = Math.round((c.precipitation || 0) * 3600 / (c.interval || 3600) * 10) / 10;
+                    liveForecast = (data.hourly && data.hourly.precipitation) || [];
+                    document.getElementById('live-rain').innerText = `${currentLiveRain} mm/h`;
+                    document.getElementById('live-temp').innerText = `${c.temperature_2m} °C`;
+                    document.getElementById('live-hum').innerText = `${c.relative_humidity_2m} %`;
                     document.getElementById('live-rain-level').innerText = rainLevel(currentLiveRain);
                 }
             } catch (e) {
@@ -1234,35 +1380,36 @@
         fetchLiveWeather();
 
         async function applyLiveWeatherToModel() {
-            const liveBtn = document.getElementById('live-btn');
-            liveBtn.classList.add('is-loading');
-
-            // Fetch the latest live weather from Open-Meteo
+            setBusy('live-btn', true);
             await fetchLiveWeather();
-            liveBtn.classList.remove('is-loading');
-
-            // Extract the true live rain value (default to 0 if it's not raining)
-            const rawRain = parseFloat(currentLiveRain) || 0;
-
-            // Map it to your slider's range (min 0, max 120)
-            const intensityToSet = Math.min(120, Math.max(0, Math.round(rawRain)));
-
-            // Update the slider position
-            setSliders(intensityToSet, 2);
-
-            // Automatically run the prediction model
-            runFloodSimulation();
+            setBusy('live-btn', false);
+            const rate = currentLiveRain || 0;
+            if (rate < 0.5) {
+                toast('No rain is falling in Nairobi right now (Open-Meteo, last 15 minutes). Choose a preset to explore a storm.');
+                return;
+            }
+            // Duration: consecutive forecast hours with at least 1 mm of rain, from this hour on (1 to 6 h)
+            let hours = 0;
+            while (hours < liveForecast.length && liveForecast[hours] >= 1) hours++;
+            const duration = Math.min(6, Math.max(1, hours));
+            const intensity = Math.min(120, Math.max(1, Math.round(rate)));
+            setSliders(intensity, duration);
+            toast(`Live rain: ${rate} mm/h over the last 15 minutes, forecast to last about ${duration} h. Running ${intensity} mm/h for ${duration} h.`, 'info', 9000);
+            runFloodSimulation({ busyId: 'live-btn' });
         }
 
         // =========================================================
         // 1. FLOOD SCENARIO
         // =========================================================
-        async function runFloodSimulation() {
+        // busyId: the button that started the run shows the loading state (the top progress bar always does)
+        let simBusyId = null;
+        async function runFloodSimulation({ busyId = 'sim-btn' } = {}) {
             const storm = currentStorm();
             const seq = ++runSeq;
             document.getElementById('progress').classList.add('on');
-            setBusy('sim-btn', true);
-            setBusy('live-btn', true);
+            if (simBusyId && simBusyId !== busyId) setBusy(simBusyId, false);
+            simBusyId = busyId;
+            setBusy(busyId, true);
             document.getElementById('ov-storm').innerText = `${storm.intensity} mm/h for ${storm.duration} h`;
             document.getElementById('ov-storm-sub').innerText = 'Running the flood model… a new storm takes up to 30 seconds';
 
@@ -1295,19 +1442,31 @@
             } finally {
                 if (seq === runSeq) {
                     document.getElementById('progress').classList.remove('on');
-                    setBusy('sim-btn', false);
-                    setBusy('live-btn', false);
+                    setBusy(busyId, false);
+                    simBusyId = null;
                 }
             }
         }
 
         // ---------- Flood layers ----------
         function opacity() { return Number(document.getElementById('opacity-slider').value) / 100; }
+        // Hexagon borders thin out when zoomed out. Style inputs are read once per restyle, not once per hexagon:
+        // reading a CSS variable for each of ~1,700 hexagons on every zoom froze the map for over a second.
+        function zoneWeight() { const z = map.getZoom(); return z >= 14 ? 1 : z >= 13 ? 0.6 : 0.25; }
+        let zoneStrokeColor = '#fff', zoneStrokeWeight = 0.25, zoneOpacity = 0.8;
+        function refreshZoneStyleInputs() {
+            zoneStrokeColor = getComputedStyle(document.documentElement).getPropertyValue('--zone-stroke').trim() || '#fff';
+            zoneStrokeWeight = zoneWeight();
+            zoneOpacity = opacity();
+        }
         function zoneStyle(f) {
             const l = LEVEL[f.properties.level];
-            return { fillColor: l ? l.color : '#cbd5e1', fillOpacity: 0.75 * opacity(),
-                     color: getComputedStyle(document.documentElement).getPropertyValue('--zone-stroke').trim() || '#fff',
-                     weight: map.getZoom() >= 14 ? 1 : map.getZoom() >= 13 ? 0.6 : 0.25, opacity: 0.7 * opacity() };
+            return { fillColor: l ? l.color : '#cbd5e1', fillOpacity: 0.75 * zoneOpacity,
+                     color: zoneStrokeColor, weight: zoneStrokeWeight, opacity: 0.7 * zoneOpacity };
+        }
+        function restyleZones() {
+            refreshZoneStyleInputs();
+            if (zonesLayer) zonesLayer.setStyle(zoneStyle);
         }
         function extentStyle(f) {
             const c = BAND_COLORS[f.properties.band];
@@ -1316,17 +1475,20 @@
         }
         function zoneTooltip(p) {
             const l = LEVEL[p.level];
-            return `<b>${escapeHtml(l ? l.label : 'Minor')} hazard</b><br>${p.flooded_pct}% of this 10 ha zone flooded<br>
+            return `<b>${escapeHtml(l ? l.label : 'Minor')} hazard</b><br>${p.flooded_pct}% of this area (${ZONE_SIZE}) flooded<br>
                 Deepest: ${depthText(p.max_depth_m)} · ${fmt(p.buildings_exposed)} buildings in water &gt; 30 cm`;
         }
         function buildFloodLayers(data, zones, extent) {
             [zonesLayer, extentLayer, cellsLayer].forEach(l => { if (l) map.removeLayer(l); });
+            refreshZoneStyleInputs();
             zonesLayer = L.geoJSON(zones, {
                 renderer: floodRenderer, style: zoneStyle,
                 onEachFeature: (f, layer) => layer.bindTooltip(() => zoneTooltip(f.properties), { sticky: true, className: 'zone-tip', direction: 'top', offset: [0, -8] }),
             });
             const feats = extent.features.slice().sort((a, b) => a.properties.band - b.properties.band).map(smoothFeature);
-            extentLayer = L.geoJSON({ type: 'FeatureCollection', features: feats }, { renderer: floodRenderer, style: extentStyle, interactive: false });
+            // smoothFactor: Leaflet drops points closer than ~2 screen pixels when drawing, so the smoothed outlines
+            // look the same but redraw faster after each zoom
+            extentLayer = L.geoJSON({ type: 'FeatureCollection', features: feats }, { renderer: floodRenderer, style: extentStyle, interactive: false, smoothFactor: 2 });
             cellsLayer = L.imageOverlay('/api/flood/overlay.png?' + new URLSearchParams(simStorm).toString(), data.overlay.bounds,
                 { pane: 'flood', opacity: Math.min(1, opacity() / 0.85), interactive: false, alt: 'Predicted flood depth, 30 m cells' });
             updateFloodDisplay();
@@ -1364,13 +1526,14 @@
             renderLegend(mode);
         }
         function applyOpacity() {
-            if (zonesLayer) zonesLayer.setStyle(zoneStyle);
+            restyleZones();
             if (extentLayer) extentLayer.setStyle(extentStyle);
             if (cellsLayer) cellsLayer.setOpacity(Math.min(1, opacity() / 0.85));   // the image itself is drawn at 85%
         }
         map.on('zoomend', () => {
             if (displayMode === 'auto') updateFloodDisplay();
-            if (zonesLayer && map.hasLayer(zonesLayer)) zonesLayer.setStyle(zoneStyle);   // hexagon borders thin out when zoomed out
+            // Restyle only when the border width actually changes (at zoom 13 and 14), not on every zoom step
+            if (zonesLayer && map.hasLayer(zonesLayer) && zoneWeight() !== zoneStrokeWeight) restyleZones();
         });
 
         function renderLegend(mode) {
@@ -1384,9 +1547,11 @@
                 return;
             }
             title.innerText = mode === 'zones' ? 'Flood hazard zones' : 'Flood outlines by depth';
-            body.innerHTML = LEVELS.map(l => `<div class="lg-row"><span class="sw" style="background:${l.color}"></span><span>${escapeHtml(l.depth)}</span><em>${escapeHtml(l.meaning)}</em></div>`).join('') +
+            // Zones show the level name with its depth band; outlines are plain depth bands
+            body.innerHTML = LEVELS.map(l => `<div class="lg-row"><span class="sw" style="background:${l.color}"></span>`
+                + `<span>${mode === 'zones' ? `<b>${escapeHtml(l.label)}</b> · ` : ''}${escapeHtml(l.depth)}</span><em>${escapeHtml(l.meaning)}</em></div>`).join('') +
                 `<p class="lg-note">${mode === 'zones'
-                    ? 'Each hexagon (10 ha) shows the deepest water covering at least 10% of it. Zoom in for exact outlines.'
+                    ? `Each hexagon (${ZONE_SIZE}) shows the deepest water covering at least 10% of it. Zoom in for exact outlines.`
                     : 'Outlines of predicted water, smoothed from 30 m cells. Click any spot for its exact depth.'}</p>`;
         }
 
@@ -1397,7 +1562,7 @@
             document.getElementById('ov-storm-sub').innerText = `${Math.round(data.storm.rain_total_mm)} mm of rain in total · Nairobi County`;
             const share = 100 * s.flooded_km2 / s.county_km2;
             const z = data.zones || {};
-            const hiZones = (z.very_high || 0) + (z.severe || 0);
+            const hiZones = (z.high || 0) + (z.severe || 0);
             document.getElementById('kpis').innerHTML = `
                 <div class="kpi"><div class="kpi-label">Area flooded</div><div class="kpi-value">${s.flooded_km2} <small>km²</small></div>
                     <div class="kpi-sub">${share.toFixed(1)}% of the county · ${s.deep_km2} km² deeper than 60 cm</div></div>
@@ -1406,10 +1571,11 @@
                 <div class="kpi"><div class="kpi-label">Facilities exposed</div><div class="kpi-value">${fmt(s.facilities_exposed)}</div>
                     <div class="kpi-sub">schools, health &amp; emergency services</div></div>
                 <div class="kpi"><div class="kpi-label">High-hazard zones</div><div class="kpi-value">${fmt(hiZones)}</div>
-                    <div class="kpi-sub">10 ha zones at very high or severe level</div></div>`;
+                    <div class="kpi-sub">areas ${ZONE_SIZE} at High or Severe level</div></div>`;
 
             const total = LEVELS.reduce((a, l) => a + (z[l.key] || 0), 0);
-            document.getElementById('zone-total').innerText = total ? `${fmt(total)} zones · ${fmt(Math.round(total * 10.4))} ha` : '';
+            // Each zone is ~0.104 km² (a hexagon 350 m across)
+            document.getElementById('zone-total').innerText = total ? `${fmt(total)} zones · ${fmt(Math.round(total * 0.104))} km²` : '';
             document.getElementById('zone-stack').innerHTML = total
                 ? LEVELS.map(l => `<i style="width:${100 * (z[l.key] || 0) / total}%;background:${l.color}" title="${l.label}: ${z[l.key] || 0}"></i>`).join('') : '';
             document.getElementById('zone-legend').innerHTML = LEVELS.map(l =>
@@ -1432,7 +1598,7 @@
         function hotspotRow(h, k) {
             return `<button type="button" class="row" style="--c:${depthColor(h.p90_depth_m)}" onclick="goHotspot(${k})">
                 <span class="rank" style="color:${inkOn(h.p90_depth_m)}">${k + 1}</span>
-                <span class="row-main"><div class="row-name">${escapeHtml(h.name)}</div><div class="row-sub">${escapeHtml(h.subcounty || '')} · ${h.area_ha} ha in deep water</div></span>
+                <span class="row-main"><div class="row-name">${escapeHtml(h.name)}</div><div class="row-sub" title="${h.deep_share_pct}% of this 1 km × 1 km square is under water deeper than 30 cm">${escapeHtml(h.subcounty || '')} · ${h.deep_share_pct}% &gt;30 cm</div></span>
                 <span class="row-val">${fmt(h.buildings_exposed)}<small>buildings</small></span></button>`;
         }
         function goHotspot(k) {
@@ -1463,7 +1629,7 @@
                 const rows = lastData.subcounties.map((sc, k) => [sc, k]).filter(([sc]) => match(sc.name));
                 box.innerHTML = rows.length ? `<div class="rows">${rows.map(([sc, k]) => subcountyRow(sc, k, maxB)).join('')}</div>` : '<div class="empty">No match.</div>';
             } else if (areaList === 'hotspots') {
-                help.innerText = '1 km squares with the most buildings in water deeper than 30 cm. Click to inspect.';
+                help.innerText = '1 km × 1 km squares with the most buildings in water deeper than 30 cm. The % is how much of the square is that deep. Click to inspect.';
                 const rows = lastData.hotspots.map((h, k) => [h, k]).filter(([h]) => match(h.name, h.subcounty));
                 box.innerHTML = rows.length ? `<div class="rows">${rows.map(([h, k]) => hotspotRow(h, k)).join('')}</div>`
                     : `<div class="empty">${lastData.hotspots.length ? 'No match.' : 'No hotspots for this storm.'}</div>`;
@@ -1474,7 +1640,7 @@
                 box.innerHTML = rows.length ? `<div class="rows">${rows.map(([f, k]) => `
                     <button type="button" class="row" style="--c:${depthColor(f.depth_m)}" onclick="goFacility(${k})">
                         <span class="rank" style="color:${inkOn(f.depth_m)}">${k + 1}</span>
-                        <span class="row-main"><div class="row-name">${escapeHtml(f.name)}</div><div class="row-sub">${escapeHtml(String(f.type).replace(/_/g, ' '))}</div></span>
+                        <span class="row-main"><div class="row-name">${escapeHtml(f.name)}</div><div class="row-sub">${escapeHtml(String(f.type).replace(/_/g, ' '))}${f.closed_hollow ? ' · closed hollow, depth uncertain' : ''}</div></span>
                         <span class="row-val">${escapeHtml(f.depth_label)}<small>depth</small></span></button>`).join('')}</div>`
                     : `<div class="empty">${n ? 'No match.' : 'No facilities in floodwater for this storm.'}</div>`;
             }
@@ -1561,8 +1727,10 @@
                 const bg = p.flooded ? depthColor(p.depth_m) : 'var(--safe-soft)';
                 const ink = p.flooded ? inkOn(p.depth_m) : 'var(--safe)';
                 const z = p.zone, zl = LEVEL[z.level];
-                const zoneText = z.level === 'none' ? 'No flooding predicted in the surrounding 10 ha zone.'
-                    : `${zl ? zl.label : 'Minor'} hazard zone: ${z.flooded_pct}% of the surrounding 10 ha flooded, deepest ${depthText(z.max_depth_m)}, ${fmt(z.buildings_exposed)} buildings in water deeper than 30 cm.`;
+                // The zone describes the hexagon around the spot (deepest band covering 10% of it), not the spot itself
+                const zoneText = z.level === 'none' ? `Surrounding area (${ZONE_SIZE}): no flooding predicted.`
+                    : zl ? `Surrounding area (${ZONE_SIZE}): ${zl.label} hazard. ${z.flooded_pct}% of it is flooded and at least 10% has water ${zl.depth} deep (deepest ${depthText(z.max_depth_m)}); ${fmt(z.buildings_exposed)} buildings there are in water deeper than 30 cm.`
+                    : `Surrounding area (${ZONE_SIZE}): minor flooding, ${z.flooded_pct}% of it flooded (deepest ${depthText(z.max_depth_m)}).`;
                 const rows = Object.entries(p.vehicles).map(([k, v]) => `<tr>
                     <td><svg class="i"><use href="#${VEHICLE_ICON[k] || 'i-car'}"/></svg></td>
                     <td>${escapeHtml((vehicles[k] && vehicles[k].label) || VEHICLE_SHORT[k] || k)}</td>
@@ -1578,7 +1746,9 @@
                         <div class="stat"><b>${fmt(p.buildings_in_cell)}</b><span>buildings in 30 m cell</span></div>
                     </div>
                     <div class="zone-card"><span class="sw" style="background:${zl ? zl.color : 'var(--surface-3)'}"></span><span>${escapeHtml(zoneText)}</span></div>
-                    <div class="sec"><div class="sec-head"><h2>Can I drive through?</h2></div><table class="veh-table">${rows}</table></div>
+                    ${p.closed_hollow && p.flooded ? `<p class="note">Closed hollow in the terrain data (a quarry, or a pit in the elevation model). Water collects here in the simulation because nothing drains it, so the depth is uncertain.</p>` : ''}
+                    <div class="sec"><div class="sec-head"><h2>Can I drive through here?</h2></div><table class="veh-table">${rows}</table>
+                        <p class="muted" style="margin:8px 0 0">For this spot. <b>Slow – shallow water</b>: flooded but within the vehicle's limits, drive slowly. <b>Unsafe</b>: deeper or faster than its limit. Boda bodas avoid any likely flooding, as there is no published limit for motorcycles.</p></div>
                     <div class="sec btn-row">
                         <button class="btn btn-primary" id="why-btn" onclick="explainPoint()"><svg class="i"><use href="#i-chart"/></svg>Why here?</button>
                     </div>
@@ -1659,16 +1829,20 @@
                     </div>
                     ${m.vehicle_metrics ? `<div class="sec">
                         <div class="sec-head"><h2>Vehicle safety calls</h2></div>
-                        <p class="prose">How often the model agrees with the simulator that a cell is unsafe for each vehicle, on unseen areas.</p>
+                        <p class="prose">Share of the cells the simulator says are unsafe for each vehicle that the dashboard also treats as unsafe ("caught"), and how often its unsafe calls are right ("correct"), on unseen areas.
+                        ${m.vehicle_metrics_with_margin ? 'Routing applies each limit with a safety margin chosen on separate validation areas to catch at least 90% of unsafe cells, at the cost of some unnecessary detours.' : ''}</p>
                         <div class="kv">
-                            ${Object.entries(m.vehicle_metrics).map(([k, v]) => `<span>${escapeHtml(vehicles[k] ? vehicles[k].label : k)}</span>`
-                                + `<b>${pct(v.Recall)} caught · ${pct(v.Precision)} correct</b>`).join('')}
+                            ${Object.entries(m.vehicle_metrics_with_margin || m.vehicle_metrics).map(([k, v]) => {
+                                const r = v.recall ?? v.Recall, p = v.precision ?? v.Precision, base = m.vehicle_metrics[k];
+                                return `<span>${escapeHtml(vehicles[k] ? vehicles[k].label : k)}</span>`
+                                    + `<b>${pct(r)} caught · ${pct(p)} correct${m.vehicle_metrics_with_margin && base ? `<small class="muted" style="display:block;font-weight:400">${pct(base.Recall)} · ${pct(base.Precision)} at the published limit</small>` : ''}</b>`;
+                            }).join('')}
                         </div>
                     </div>` : ''}
                     <div class="sec">
                         <div class="sec-head"><h2>How the map is drawn</h2></div>
                         <ul class="bullets">
-                            <li><b>Hazard zones</b>: the county is divided into 10-hectare hexagons. Each is coloured by the deepest water band that covers at least 10% of it; zones with less flooding are not drawn.</li>
+                            <li><b>Hazard zones</b>: the county is divided into hexagons about 350 m across (roughly 14 football pitches each). Each is coloured by the deepest water band that covers at least 10% of it; zones with less flooding are not drawn.</li>
                             <li><b>Flood outlines</b>: the predicted water area traced as polygons per depth band. Each band is lightly blurred, traced on a 10 m grid and its corners rounded, so edges can differ from the 30 m cells by about half a cell.</li>
                             <li><b>30 m cells</b>: the raw model output. All statistics, spot checks and routes use these cells.</li>
                             <li>Water collects along river channels, so at this resolution many outlines are long and narrow.</li>
@@ -1681,7 +1855,8 @@
                             <li>Rivers bringing water from outside the map area (e.g. the Athi River) are not modelled.</li>
                             <li>30 m cells cannot resolve narrow roads, road embankments or single buildings.</li>
                             <li>Soil is assumed to be hydrologic group C everywhere.</li>
-                            <li>Closed hollows such as quarries fill up and can show depths over 2 m.</li>
+                            <li>Closed hollows in the terrain (quarries, or pits in the elevation data) fill up because nothing drains them. Sites in them are marked "closed hollow", and their depth is uncertain.</li>
+                            <li>Depths are reported up to 2 m; deeper water is shown as "&gt; 2 m". Every decision in the dashboard uses a lower threshold, and deeper simulated ponds are not reliable.</li>
                             <li>Scenario names (Heavy, Intense, Violent, Extreme) describe rainfall rate only; no return period is implied.</li>
                         </ul>
                     </div>`;
@@ -1701,10 +1876,16 @@
             const el = document.querySelector('input[name="vehicle"]:checked');
             return el ? el.value : 'saloon';
         }
+        // v.applied: the limit the router uses, i.e. the published limit with its safety margin (model_api decision_limits)
         function limitText(v) {
             if (!v) return '';
-            if (v.dv_m2s == null) return 'Avoids any predicted flooding';
-            return `Avoids water deeper than ${Math.round(v.depth_m * 100)} cm` + (modelInfo && modelInfo.dv_available ? ` or flowing faster than ${v.dv_m2s} m²/s (depth × speed)` : '');
+            const a = v.applied || { depth_m: v.depth_m, dv_m2s: v.dv_m2s, factor: 1 };
+            if (v.dv_m2s == null) return a.prob < (modelInfo ? modelInfo.model.threshold : 1)
+                ? `Avoids any likely flooding, including places only ${Math.round(a.prob * 100)}% likely to flood (safety margin)`
+                : 'Avoids any predicted flooding';
+            const speed = modelInfo && modelInfo.dv_available ? ` or flowing faster than ${a.dv_m2s} m²/s (depth × speed)` : '';
+            const margin = a.factor < 1 ? `. Published limit ${Math.round(v.depth_m * 100)} cm${modelInfo && modelInfo.dv_available ? ` / ${v.dv_m2s} m²/s` : ''}, reduced as a safety margin for model error` : '';
+            return `Avoids water deeper than ${Math.round(a.depth_m * 100)} cm${speed}${margin}`;
         }
         function updateVehicleLimit() {
             const k = selectedVehicle();
@@ -1875,7 +2056,7 @@
 
         function clearRouting() {
             [startMarker, endMarker, routeLayer].forEach(l => { if (l) map.removeLayer(l); });
-            startMarker = endMarker = routeLayer = null;
+            startMarker = endMarker = routeLayer = lastRoute = null;
             startCoords = endCoords = null;
             document.getElementById('origin-input').value = '';
             document.getElementById('dest-input').value = '';
@@ -1885,10 +2066,13 @@
         }
 
         const ROUTE_STYLE = {
-            safe:   { pane: 'routes', color: '#16a34a', weight: 7, opacity: 0.95, lineCap: 'round', lineJoin: 'round' },
-            direct: { pane: 'routes', color: '#8b5cf6', weight: 4, opacity: 0.85, dashArray: '9, 9', lineCap: 'round' },
-            hazard: { pane: 'routes', color: '#dc2626', weight: 9, opacity: 0.95, lineCap: 'round' },
+            safe:        { pane: 'routes', color: '#16a34a', weight: 7, opacity: 0.95, lineCap: 'round', lineJoin: 'round' },
+            alternative: { pane: 'routes', color: '#64748b', weight: 6, opacity: 0.75, lineCap: 'round', lineJoin: 'round' },
+            direct:      { pane: 'routes', color: '#8b5cf6', weight: 4, opacity: 0.85, dashArray: '9, 9', lineCap: 'round' },
+            hazard:      { pane: 'routes', color: '#dc2626', weight: 9, opacity: 0.95, lineCap: 'round' },
         };
+        const LONG_DETOUR_RATIO = 2.0;   // model_api.py LONG_DETOUR_RATIO
+        let lastRoute = null;            // /route response on screen
 
         async function fetchRoute() {
             const storm = activeStorm();
@@ -1902,53 +2086,93 @@
                     end_lat: endCoords.lat.toFixed(5), end_lng: endCoords.lng.toFixed(5), vehicle,
                 }, storm));
                 if (!startCoords || !endCoords) return;   // cleared while the request was running
-                if (routeLayer) map.removeLayer(routeLayer);
-                const order = { direct: 0, safe: 1, hazard: 2 };
-                const feats = data.features.slice().sort((a, b) => order[a.properties.route_type] - order[b.properties.route_type]);
-                routeLayer = L.geoJSON({ type: 'FeatureCollection', features: feats }, {
-                    style: f => ROUTE_STYLE[f.properties.route_type], bubblingMouseEvents: false,
-                    onEachFeature: (f, layer) => {
-                        const p = f.properties;
-                        if (p.route_type === 'hazard') {
-                            layer.bindTooltip(`<b>${escapeHtml(p.road)}</b><br>Unsafe for this vehicle · up to ${depthText(p.max_depth_m)} deep` +
-                                (p.max_dv_m2s != null ? ` · ${p.max_dv_m2s} m²/s` : ''), { sticky: true, className: 'zone-tip' });
-                        }
-                    }
-                }).addTo(map);
-                document.getElementById('legend-route').hidden = false;
-                if (routeLayer.getBounds().isValid()) map.fitBounds(routeLayer.getBounds(), { padding: [50, 50] });
-
-                const P = data.properties;
-                const safe = data.features.find(f => f.properties.route_type === 'safe');
-                const s = safe ? safe.properties : null;
-                const d = P.direct;
-                const metrics = (r, label) => `<div class="metrics">
-                    <div class="metric"><b>${r.distance_km} km</b><span>${label} distance</span></div>
-                    <div class="metric"><b>${Math.round(r.duration_min)} min</b><span>travel time</span></div>
-                    <div class="metric"><b>${fmt(r.flooded_length_m)} m</b><span>through water</span></div></div>`;
-                const details = `<details class="fine"><summary>Vehicle limits and assumptions</summary>
-                    <p>${escapeHtml(`${P.vehicle_label}: ${limitText(vehicles[P.vehicle] || P.limits)}. Basis: ${P.limits.basis}.`)}</p>
-                    ${P.notes && P.notes.length ? `<p>${escapeHtml(P.notes.join(' '))}</p>` : ''}
-                    <p>${escapeHtml(P.assumptions)}</p>
-                    <p>Scenario: ${P.storm.intensity_mmhr} mm/h for ${P.storm.duration_hr} h.</p></details>`;
-
-                if (P.status === 'clear') {
-                    setRouteStatus('safe', 'Route is clear', s.flooded_length_m > 0
-                        ? `No unsafe water on the way, but ${fmt(s.flooded_length_m)} m runs through shallow water: drive slowly.`
-                        : 'No predicted flooding on the way.', metrics(s, 'Route') + details);
-                } else if (P.status === 'detour') {
-                    setRouteStatus(P.advisory ? 'med' : 'safe', P.advisory ? 'Long detour – consider waiting' : 'Safe detour found',
-                        `Avoids ${d.unsafe_segments} unsafe ${d.unsafe_segments === 1 ? 'stretch' : 'stretches'} on the direct route (red). Direct route: ${Math.round(d.duration_min)} min.` +
-                        (P.advisory ? ' ' + P.advisory : ''), metrics(s, 'Detour') + details);
-                } else {
-                    setRouteStatus('high', 'No safe route for this vehicle', P.advisory +
-                        ` The direct route crosses ${d.unsafe_segments} unsafe ${d.unsafe_segments === 1 ? 'stretch' : 'stretches'} (red), up to ${depthText(d.max_depth_m)} deep.`, details);
-                }
+                lastRoute = data;
+                renderRoute(data, { fit: true });
             } catch (err) {
                 console.error('Routing error:', err);
                 setRouteStatus('high', "Couldn't calculate the route", err.message);
             } finally {
                 setBusy('route-btn', false);
+            }
+        }
+
+        // Make the similar alternative the chosen route (and the chosen one the alternative)
+        function swapRoute() {
+            if (!lastRoute) return;
+            lastRoute.features.forEach(f => {
+                const t = f.properties.route_type;
+                if (t === 'safe' || t === 'alternative') f.properties.route_type = t === 'safe' ? 'alternative' : 'safe';
+            });
+            renderRoute(lastRoute, { fit: false });
+        }
+
+        function renderRoute(data, { fit }) {
+            if (routeLayer) map.removeLayer(routeLayer);
+            const order = { direct: 0, alternative: 1, safe: 2, hazard: 3 };
+            const feats = data.features.slice().sort((a, b) => order[a.properties.route_type] - order[b.properties.route_type]);
+            routeLayer = L.geoJSON({ type: 'FeatureCollection', features: feats }, {
+                style: f => ROUTE_STYLE[f.properties.route_type], bubblingMouseEvents: false,
+                onEachFeature: (f, layer) => {
+                    const p = f.properties;
+                    if (p.route_type === 'hazard') {
+                        layer.bindTooltip(`<b>${escapeHtml(p.road)}</b><br>Unsafe for this vehicle · up to ${depthText(p.max_depth_m)} deep` +
+                            (p.max_dv_m2s != null ? ` · ${p.max_dv_m2s} m²/s` : ''), { sticky: true, className: 'zone-tip' });
+                    } else if (p.route_type === 'alternative') {
+                        layer.bindTooltip(`Similar alternative · ${p.distance_km} km<br>Click to use this route`, { sticky: true, className: 'zone-tip' });
+                        layer.on('click', swapRoute);
+                    }
+                }
+            }).addTo(map);
+            document.getElementById('legend-route').hidden = false;
+            if (fit && routeLayer.getBounds().isValid()) {
+                // Keep the route clear of the legend at the bottom of the map
+                const lg = document.getElementById('legend');
+                const bottom = lg && lg.offsetParent ? lg.offsetHeight + 24 : 50;
+                map.fitBounds(routeLayer.getBounds(), { paddingTopLeft: [50, 50], paddingBottomRight: [50, bottom] });
+            }
+
+            const P = data.properties;
+            const find = t => (data.features.find(f => f.properties.route_type === t) || {}).properties || null;
+            const s = find('safe'), alt = find('alternative');
+            document.getElementById('legend-alt').hidden = !alt;
+            const d = P.direct;
+            // Routes are compared by distance: travel time is used only inside the router (no traffic data)
+            const vsDirect = r => {
+                const extra = r.distance_km - d.distance_km;
+                return extra < 0.05 ? 'Same' : r.distance_km > 1.5 * d.distance_km
+                    ? `${(r.distance_km / d.distance_km).toFixed(1)}×` : `+${extra.toFixed(1)} km`;
+            };
+            const metrics = (r, label, compare) => `<div class="metrics">
+                <div class="metric"><b>${r.distance_km} km</b><span>${label} distance</span></div>
+                ${compare ? `<div class="metric"><b>${vsDirect(r)}</b><span>vs ${d.distance_km} km direct</span></div>` : ''}
+                <div class="metric"><b>${fmt(r.flooded_length_m)} m</b><span>through water</span></div></div>`;
+            const altDiff = alt && s ? (Math.abs(alt.distance_km - s.distance_km) < 0.05 ? 'same distance'
+                : `${alt.distance_km > s.distance_km ? '+' : '−'}${Math.abs(alt.distance_km - s.distance_km).toFixed(1)} km`) : '';
+            const altCard = alt ? `<div class="alt-card">
+                <span><b>Similar alternative</b> · ${alt.distance_km} km (${altDiff}) · ${fmt(alt.flooded_length_m)} m through water</span>
+                <button class="link" onclick="swapRoute()">Use this route</button></div>` : '';
+            const forWhat = `<p class="muted" style="margin:0 0 8px">${escapeHtml(VEHICLE_SHORT[P.vehicle] || P.vehicle_label)} · ${P.storm.intensity_mmhr} mm/h for ${P.storm.duration_hr} h</p>`;
+            const details = `<details class="fine"><summary>Vehicle limits and assumptions</summary>
+                <p>${escapeHtml(`${P.vehicle_label}: ${limitText(vehicles[P.vehicle] || P.limits)}. Basis: ${P.limits.basis}.`)}</p>
+                ${P.notes && P.notes.length ? `<p>${escapeHtml(P.notes.join(' '))}</p>` : ''}
+                <p>${escapeHtml(P.assumptions)}</p>
+                <p>The alternative (grey) is a second safe route on different roads, offered when it is about as quick for the router as the first.</p>
+                <p>Scenario: ${P.storm.intensity_mmhr} mm/h for ${P.storm.duration_hr} h.</p></details>`;
+
+            if (P.status === 'clear') {
+                setRouteStatus('safe', 'Route is clear', s.flooded_length_m > 0
+                    ? `No unsafe water on the way, but ${fmt(s.flooded_length_m)} m runs through shallow water: drive slowly.`
+                    : 'No predicted flooding on the way.', forWhat + metrics(s, 'Route', false) + altCard + details);
+            } else if (P.status === 'detour') {
+                // Worded here rather than taken from the server, so it stays right after switching to the alternative
+                const long = s.distance_km > LONG_DETOUR_RATIO * d.distance_km;
+                setRouteStatus(long ? 'med' : 'safe', long ? 'Long detour – consider waiting' : 'Safe detour found',
+                    `Avoids ${d.unsafe_segments} unsafe ${d.unsafe_segments === 1 ? 'stretch' : 'stretches'} on the direct route (red).` +
+                    (long ? ` The safe route is ${s.distance_km.toFixed(1)} km, about ${(s.distance_km / d.distance_km).toFixed(1)}× the direct route (${d.distance_km.toFixed(1)} km). Consider waiting for the water to recede.` : ''),
+                    forWhat + metrics(s, 'Detour', true) + altCard + details);
+            } else {
+                setRouteStatus('high', 'No safe route for this vehicle', P.advisory +
+                    ` The direct route (${d.distance_km} km) crosses ${d.unsafe_segments} unsafe ${d.unsafe_segments === 1 ? 'stretch' : 'stretches'} (red), up to ${depthText(d.max_depth_m)} deep.`, forWhat + details);
             }
         }
 
@@ -1971,6 +2195,7 @@
             let data = null;
             try { data = await res.json(); } catch (e) {}
             if (!res.ok) {
+                if (data && data.signed_out) staffSignedOut(data.error);
                 const first = data && data.errors ? Object.values(data.errors)[0][0] : null;
                 throw new Error(first || (data && (data.error || data.message)) || `Request failed (HTTP ${res.status})`);
             }
@@ -2135,8 +2360,9 @@
             if (storm !== simStorm) return;
             if (activeModule === 'places') renderPlaces();
             if (announce) {
-                const hit = places.filter(p => p.status && ['high', 'very_high', 'severe'].includes(p.status.zone.level));
-                if (hit.length) toast(`${hit.map(p => p.name).join(', ')} ${hit.length > 1 ? 'are' : 'is'} in a High or worse hazard zone in this scenario.`, 'error', 10000);
+                // Same threshold as before the levels were renamed: water of 30 cm or more covering a tenth of the area
+                const hit = places.filter(p => p.status && ['moderate', 'high', 'severe'].includes(p.status.zone.level));
+                if (hit.length) toast(`${hit.map(p => p.name).join(', ')} ${hit.length > 1 ? 'are' : 'is'} in an area with water 30 cm or deeper in this scenario.`, 'error', 10000);
             }
         }
         function placeStatusHtml(p) {
@@ -2307,7 +2533,7 @@
             box.innerHTML = f.length ? `<div class="rows">${f.map((x, k) => `
                 <div class="row" style="--c:${depthColor(x.depth_m)};cursor:default">
                     <span class="rank" style="color:${inkOn(x.depth_m)}">${k + 1}</span>
-                    <span class="row-main"><div class="row-name">${escapeHtml(x.name)}</div><div class="row-sub">${escapeHtml(String(x.type).replace(/_/g, ' '))}</div></span>
+                    <span class="row-main"><div class="row-name">${escapeHtml(x.name)}</div><div class="row-sub">${escapeHtml(String(x.type).replace(/_/g, ' '))}${x.closed_hollow ? ' · closed hollow, depth uncertain' : ''}</div></span>
                     <span class="row-val">${escapeHtml(x.depth_label)}<small>depth</small></span>
                     <span class="row-actions"><button class="link" onclick="goFacility(${k})">Inspect</button><button class="link" onclick="routeToFacility(${k})">Lorry route here</button></span>
                 </div>`).join('')}</div>` : '<div class="empty">No facilities in floodwater for this storm.</div>';
@@ -2348,10 +2574,10 @@
                 ['Buildings in water deeper than 30 cm', d.summary.buildings_exposed], ['Facilities in water deeper than 30 cm', d.summary.facilities_exposed], [],
                 ['Sub-counties'], ['Rank', 'Sub-county', 'Flooded (km2)', 'Flooded (%)', 'Buildings exposed', '90th percentile depth (m)'],
                 ...d.subcounties.map((x, k) => [k + 1, x.name, x.flooded_km2, x.flooded_pct, x.buildings_exposed, x.p90_depth_m]), [],
-                ['Hotspots (1 km squares)'], ['Rank', 'Place', 'Sub-county', 'Lat', 'Lng', 'Area in deep water (ha)', 'Buildings exposed', 'Depth'],
-                ...d.hotspots.map((x, k) => [k + 1, x.name, x.subcounty, x.lat, x.lng, x.area_ha, x.buildings_exposed, x.depth_label]), [],
-                ['Facilities at risk'], ['Rank', 'Name', 'Type', 'Lat', 'Lng', 'Depth'],
-                ...d.facilities.map((x, k) => [k + 1, x.name, x.type, x.lat, x.lng, x.depth_label]), [],
+                ['Hotspots (1 km squares)'], ['Rank', 'Place', 'Sub-county', 'Lat', 'Lng', 'Share of the square deeper than 30 cm (%)', 'Buildings exposed', 'Depth'],
+                ...d.hotspots.map((x, k) => [k + 1, x.name, x.subcounty, x.lat, x.lng, x.deep_share_pct, x.buildings_exposed, x.depth_label]), [],
+                ['Facilities at risk'], ['Rank', 'Name', 'Type', 'Lat', 'Lng', 'Depth', 'Note'],
+                ...d.facilities.map((x, k) => [k + 1, x.name, x.type, x.lat, x.lng, x.depth_label, x.closed_hollow ? 'Closed hollow: depth uncertain' : '']), [],
                 ['Active advisories'], ['Level', 'Headline', 'Areas', 'Issued', 'Until'],
                 ...alerts.filter(a => a.kind === 'advisory').map(a => [a.level, a.title, a.areas.join('; '), a.created_at, a.expires_at || '']),
             ];
@@ -2391,10 +2617,10 @@
                 ${adv.length ? `<h2>Active advisories</h2>${tbl(['Level', 'Headline', 'Areas', 'Until'], adv.map(a => [a.level, a.title, a.areas.join(', '), a.expires_at ? timeText(a.expires_at) : '']))}` : ''}
                 <h2>Sub-counties, ranked by buildings exposed</h2>${tbl(['#', 'Sub-county', 'Flooded km²', 'Flooded %', 'Buildings exposed', '90th pct depth (m)'],
                     d.subcounties.map((x, k) => [k + 1, x.name, x.flooded_km2, x.flooded_pct, fmt(x.buildings_exposed), x.p90_depth_m]))}
-                <h2>Hotspots</h2>${tbl(['#', 'Place', 'Sub-county', 'Area in deep water (ha)', 'Buildings exposed', 'Depth'],
-                    d.hotspots.map((x, k) => [k + 1, x.name, x.subcounty, x.area_ha, fmt(x.buildings_exposed), x.depth_label]))}
+                <h2>Hotspots (1 km squares)</h2>${tbl(['#', 'Place', 'Sub-county', 'Share deeper than 30 cm', 'Buildings exposed', 'Depth'],
+                    d.hotspots.map((x, k) => [k + 1, x.name, x.subcounty, `${x.deep_share_pct}%`, fmt(x.buildings_exposed), x.depth_label]))}
                 <h2>Facilities at risk</h2>${tbl(['#', 'Name', 'Type', 'Depth', 'Location'],
-                    d.facilities.map((x, k) => [k + 1, x.name, String(x.type).replace(/_/g, ' '), x.depth_label, `${x.lat.toFixed(5)}, ${x.lng.toFixed(5)}`]))}
+                    d.facilities.map((x, k) => [k + 1, x.name, String(x.type).replace(/_/g, ' '), x.depth_label + (x.closed_hollow ? ' (closed hollow, uncertain)' : ''), `${x.lat.toFixed(5)}, ${x.lng.toFixed(5)}`]))}
                 </body></html>`);
             w.document.close();
             w.focus();
@@ -2417,6 +2643,24 @@
         runFloodSimulation();   // show the default scenario straight away (the model server pre-computes it)
         pollAlerts();
         setInterval(pollAlerts, ALERT_POLL_MS);
+
+        // Staff sessions time out after inactivity. Real use (clicks, typing, panning) counts as
+        // activity; the alert polling above does not.
+        if (IS_STAFF) {
+            let lastPing = Date.now();
+            ['pointerdown', 'keydown', 'wheel'].forEach(ev => addEventListener(ev, () => {
+                if (Date.now() - lastPing < 4 * 60 * 1000) return;
+                lastPing = Date.now();
+                apiSend('POST', '/auth/activity').catch(() => {});
+            }, { passive: true }));
+        }
+
+        // Messages from sign-in and sign-out (e.g. a cancelled Google sign-in, or a session timeout)
+        @if (session('error'))
+            toast(@json(session('error')), 'error', 9000);
+        @elseif (session('status'))
+            toast(@json(session('status')), 'info', 9000);
+        @endif
         if (ME) loadPlaces();
     </script>
 </body>
