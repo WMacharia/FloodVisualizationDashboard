@@ -26,6 +26,12 @@ class DashboardRolesTest extends TestCase
             ->assertDontSee('id="tab-response"', false);
     }
 
+    public function test_privacy_policy_is_public(): void
+    {
+        $this->get('/privacy')->assertOk()->assertSee('Privacy policy')->assertSee('Data Protection Act');
+        $this->get('/')->assertSee('/privacy', false);
+    }
+
     public function test_responders_and_admins_get_response_tools(): void
     {
         foreach (['responder', 'admin'] as $role) {

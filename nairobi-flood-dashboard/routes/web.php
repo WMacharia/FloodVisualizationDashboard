@@ -11,6 +11,8 @@ use App\Http\Controllers\PlaceController;
 Route::get('/', function () {
     return view('dashboard');
 });
+// Privacy policy (linked from the map and from Google's sign-in consent screen)
+Route::view('/privacy', 'privacy')->name('privacy');
 
 // Map data, proxied to the Python model server (scripts/model_api.py)
 Route::prefix('api')->middleware('throttle:api')->group(function () {

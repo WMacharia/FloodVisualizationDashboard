@@ -1005,6 +1005,7 @@
         const MAP_MAX_ZOOM = 19;
         const map = L.map('map', { zoomControl: false, preferCanvas: false, maxZoom: MAP_MAX_ZOOM }).setView([-1.2880, 36.8320], 12);
         L.control.zoom({ position: 'bottomright' }).addTo(map);
+        map.attributionControl.setPrefix('<a href="/privacy">Privacy</a> · <a href="https://leafletjs.com" target="_blank" rel="noopener">Leaflet</a>');
         L.control.scale({ position: 'bottomright', imperial: false }).addTo(map);
         // Place names sit above the flooding and routes but below markers (600), tooltips (650) and popups (700),
         // so they never show through an open tooltip
