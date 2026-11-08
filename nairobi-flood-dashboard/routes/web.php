@@ -65,3 +65,7 @@ Route::middleware('admin')->group(function () {
 });
 
 Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
+// Old console sign-out address (pages opened before sign-in was merged): same sign-out. A plain
+// visit (GET) only goes to the map, because signing out must be a POST with the CSRF token.
+Route::post('/admin/logout', [AuthController::class, 'logout']);
+Route::get('/admin/logout', fn () => redirect('/'));

@@ -107,6 +107,14 @@ class StaffSecurityTest extends TestCase
             ->get('/auth/google/callback?state=x&code=y')->assertRedirect(url('/admin/dashboard'));
     }
 
+    public function test_old_console_sign_out_address_still_signs_out(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $this->actingAs($admin)->post('/admin/logout')->assertRedirect('/');
+        $this->assertGuest();
+        $this->get('/admin/logout')->assertRedirect('/');
+    }
+
     public function test_non_admins_are_sent_back_to_the_map(): void
     {
         $this->actingAs(User::factory()->create(['role' => 'responder']))
