@@ -15,6 +15,9 @@ return [
 
     'name' => env('APP_NAME', 'Laravel'),
 
+    // Shown on /privacy as the address for data requests (access, correction, deletion)
+    'privacy_contact' => env('PRIVACY_CONTACT'),
+
     /*
     |--------------------------------------------------------------------------
     | Application Environment

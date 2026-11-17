@@ -1,0 +1,5 @@
+# Shell scripts run on the Linux server: always LF line endings
+*.sh text eol=lf
+deploy/*.service text eol=lf
+deploy/*.conf text eol=lf
+deploy/env.production text eol=lf

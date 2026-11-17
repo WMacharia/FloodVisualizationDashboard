@@ -114,4 +114,29 @@ return [
 
     'password_timeout' => env('AUTH_PASSWORD_TIMEOUT', 10800),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Staff accounts (admins and responders)
+    |--------------------------------------------------------------------------
+    |
+    | Everyone signs in with Google. Google accounts listed in ADMIN_EMAILS
+    | (comma separated) become administrators when they sign in; admins can
+    | also be granted from the server with `php artisan admin:grant`. No web
+    | page can create an administrator.
+    |
+    | Staff are signed out after STAFF_IDLE_MINUTES without activity, and must
+    | sign in with Google again before sensitive actions (changing roles,
+    | deleting accounts) once STAFF_RECONFIRM_MINUTES have passed.
+    |
+    */
+
+    'admin_emails' => array_values(array_filter(array_map(
+        fn ($e) => strtolower(trim($e)),
+        explode(',', (string) env('ADMIN_EMAILS', ''))
+    ))),
+
+    'staff_idle_minutes' => (int) env('STAFF_IDLE_MINUTES', 30),
+
+    'reconfirm_minutes' => (int) env('STAFF_RECONFIRM_MINUTES', 15),
+
 ];

@@ -1,0 +1,14 @@
+# Model server only (scripts/model_api.py), Linux server. Same versions as the laptop
+# environment (scripts/nairobi_flood_env, Python 3.13), but CPU-only PyTorch: the default
+# PyPI build pulls in over 2 GB of GPU libraries the server cannot use.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.1+cpu
+fastapi==0.143.0
+uvicorn==0.54.0
+numpy==2.5.3
+scipy==1.18.1
+# headless: same OpenCV without the desktop GUI libraries a server does not have
+opencv-python-headless==5.0.0.93
+rasterio==1.5.1
+onnxruntime==1.31.1
+onnx==1.23.2

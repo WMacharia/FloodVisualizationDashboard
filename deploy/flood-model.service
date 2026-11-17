@@ -1,0 +1,16 @@
+# systemd service for the model server. setup.sh fills in __USER__ and __APP__.
+# It listens on 127.0.0.1 only: the public reaches it through Laravel, never directly.
+[Unit]
+Description=Nairobi Flood DSS model server (U-Net surrogate, FastAPI)
+After=network.target
+
+[Service]
+User=__USER__
+WorkingDirectory=__APP__/scripts
+ExecStart=__APP__/scripts/venv/bin/python -m uvicorn model_api:app --host 127.0.0.1 --port 8001
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
