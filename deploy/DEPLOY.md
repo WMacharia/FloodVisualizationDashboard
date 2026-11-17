@@ -40,7 +40,7 @@ Keep the private key (`.pem`) in `C:\Users\<you>\.ssh\`, never in the project or
 ssh -i $HOME\.ssh\flood-dss_key.pem azureuser@<dns-name>
 ```
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/WMacharia/FloodVisualizationDashboard/surrogate-model-roles-alerts/deploy/setup.sh
+curl -fsSLO https://raw.githubusercontent.com/WMacharia/FloodVisualizationDashboard/main/deploy/setup.sh
 bash setup.sh <dns-name> <your-email-for-the-https-certificate>
 ```
 

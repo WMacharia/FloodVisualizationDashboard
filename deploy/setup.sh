@@ -11,7 +11,7 @@ set -euo pipefail
 DOMAIN="${1:?Usage: bash setup.sh <domain> <email>}"
 CERT_EMAIL="${2:?Usage: bash setup.sh <domain> <email>}"
 REPO="${REPO:-https://github.com/WMacharia/FloodVisualizationDashboard.git}"
-BRANCH="${BRANCH:-surrogate-model-roles-alerts}"
+BRANCH="${BRANCH:-main}"
 APP=/srv/flood-dss
 WEB="$APP/nairobi-flood-dashboard"
 PY="$APP/scripts"
